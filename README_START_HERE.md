@@ -1,4 +1,9 @@
-# AI Planning Ecosystem — Discovery Starter
+> **Superseded.** This file describes the *original documentation-only discovery package* that the
+> repository shipped with. The repository now contains a working implementation; see **`README.md`**
+> for setup, run, test and configuration instructions. The original text is preserved below for
+> traceability only — where it conflicts with `README.md`, `AGENTS.md` or the contract, the latter win.
+
+# AI Planning Ecosystem - Discovery Starter
 
 This package contains **documentation only**, not app source code.
 

@@ -15,6 +15,12 @@ build/
 .next/
 coverage/
 
+# Local application data (SQLite database and logs) — never committed
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # Local caches
 .cache/
 .tmp/

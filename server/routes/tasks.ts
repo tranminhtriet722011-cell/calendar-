@@ -22,6 +22,7 @@ import {
   optionalInt,
   optionalReferenceId,
   optionalString,
+  optionalTitle,
   requireUser,
   type AuthedRequest,
 } from "../http";
@@ -131,7 +132,7 @@ export function taskRoutes(db: DB): Router {
     const user = (req as unknown as AuthedRequest).user;
     const body = req.body ?? {};
     const patch = {
-      title: optionalString(body.title, "title", 300),
+      title: optionalTitle(body.title, "title", 300),
       notes: optionalString(body.notes, "notes"),
       status: optionalEnum<TaskStatus>(body.status, "status", STATUSES),
       priority: body.priority === undefined ? undefined : clampPriority(body.priority),

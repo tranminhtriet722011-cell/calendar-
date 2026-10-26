@@ -12,7 +12,7 @@
 import { Router } from "express";
 import type { DB } from "../db";
 import { badRequest } from "../errors";
-import { asString, optionalBool, optionalEnum, optionalInstant, optionalInt, optionalReferenceId, optionalString, requireUser, type AuthedRequest } from "../http";
+import { asString, optionalBool, optionalEnum, optionalInstant, optionalInt, optionalReferenceId, optionalString, optionalTitle, requireUser, type AuthedRequest } from "../http";
 import {
   clampPriority,
   createCheckin,
@@ -141,7 +141,7 @@ export function planningRoutes(db: DB): Router {
       user.id,
       existing.id,
       {
-        title: optionalString(body.title, "title", 300),
+        title: optionalTitle(body.title, "title", 300),
         description: optionalString(body.description, "description", 4000),
         target: nextTarget,
         current: optionalInt(body.current, "current", 0, 1_000_000),
@@ -179,7 +179,7 @@ export function planningRoutes(db: DB): Router {
       user.id,
       req.params.milestoneId,
       {
-        title: optionalString(req.body?.title, "title", 300),
+        title: optionalTitle(req.body?.title, "title", 300),
         status: optionalEnum<"open" | "done">(req.body?.status, "status", ["open", "done"]),
         position: optionalInt(req.body?.position, "position", 0, 10000),
       },
@@ -289,7 +289,7 @@ export function planningRoutes(db: DB): Router {
       user.id,
       req.params.id,
       {
-        title: optionalString(body.title, "title", 200),
+        title: optionalTitle(body.title, "title", 200),
         cadence: optionalEnum<"daily" | "weekly">(body.cadence, "cadence", ["daily", "weekly"]),
         targetCount: optionalInt(body.targetCount, "targetCount", 1, 500),
         minSessionMinutes: optionalInt(body.minSessionMinutes, "minSessionMinutes", 0, 1440),
@@ -368,3 +368,4 @@ export function planningRoutes(db: DB): Router {
 
   return router;
 }
+

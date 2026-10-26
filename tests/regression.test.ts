@@ -29,6 +29,11 @@
  *  REV-020 milestone and check-in edits are scoped to the URL's goal/habit
  *  REV-022 "existing plan untouched" is only claimed when nothing was released
  *  REV-024 /calendar/today uses the account's local calendar day
+ *
+ * APE-ACCEPT-002 acceptance-audit regressions:
+ *  ACC-01 a PATCH can never blank an entity title — empty/whitespace is a 400 on every
+ *         title-bearing update route (task, goal, milestone, habit, event); a valid rename
+ *         persists, an absent title leaves the name untouched
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -730,4 +735,120 @@ describe("review pass #2 regressions — event gate, references, cascade, scope 
     expect(blockIds).toContain(blockA.data.block.id);
     expect(blockIds).not.toContain(blockB.data.block.id);
   });
+});
+
+describe("APE-ACCEPT-002 acceptance regressions — no entity can lose its name (ACC-01)", () => {
+  /** Every PATCH route that accepts a `title`. `patch` receives whatever `create` returned. */
+  const titleRoutes = [
+    { label: "task", create: (u: TestUser) => createTask(u.token, { title: "A named task" }), patch: (entity: any) => `/api/tasks/${entity.id}` },
+    {
+      label: "goal",
+      create: async (u: TestUser) =>
+        (await call<{ goal: any }>(server.base, "POST", "/api/goals", { token: u.token, body: { title: "A named goal" } })).data.goal,
+      patch: (entity: any) => `/api/goals/${entity.id}`,
+    },
+    {
+      label: "milestone",
+      create: async (u: TestUser) => {
+        const goal = (await call<{ goal: any }>(server.base, "POST", "/api/goals", { token: u.token, body: { title: "Parent goal" } })).data.goal;
+        const milestone = (
+          await call<{ milestone: any }>(server.base, "POST", `/api/goals/${goal.id}/milestones`, {
+            token: u.token,
+            body: { title: "A named milestone" },
+          })
+        ).data.milestone;
+        return { id: milestone.id, goalId: goal.id };
+      },
+      patch: (entity: any) => `/api/goals/${entity.goalId}/milestones/${entity.id}`,
+    },
+    {
+      label: "habit",
+      create: async (u: TestUser) =>
+        (await call<{ habit: any }>(server.base, "POST", "/api/habits", {
+          token: u.token,
+          body: { title: "A named habit", cadence: "daily", targetCount: 1 },
+        })).data.habit,
+      patch: (entity: any) => `/api/habits/${entity.id}`,
+    },
+    {
+      label: "event",
+      create: async (u: TestUser) => {
+        const start = Date.now() + 6 * HOUR;
+        return (
+          await call<{ event: any }>(server.base, "POST", "/api/calendar/events", {
+            token: u.token,
+            body: { title: "A named event", startAt: start, endAt: start + HOUR },
+          })
+        ).data.event;
+      },
+      patch: (entity: any) => `/api/calendar/events/${entity.id}`,
+    },
+  ];
+
+  for (const route of titleRoutes) {
+    it(`ACC-01: PATCH {title: ""} on a ${route.label} is a 400 and leaves the title intact`, async () => {
+      const u = await user();
+      const entity = await route.create(u);
+      const path = route.patch(entity);
+
+      const blank = await call<any>(server.base, "PATCH", path, { token: u.token, body: { title: "" } });
+      expect(blank.status).toBe(400);
+      expect(blank.data.error.message).toMatch(/title is required/i);
+
+      const whitespace = await call<any>(server.base, "PATCH", path, { token: u.token, body: { title: "   " } });
+      expect(whitespace.status).toBe(400);
+
+      // The stored title is unchanged — verify through the list/read endpoint.
+      if (route.label === "milestone") {
+        const goal = await call<any>(server.base, "GET", `/api/goals/${entity.goalId}`, { token: u.token });
+        const stored = goal.data.milestones.find((m: any) => m.id === entity.id);
+        expect(stored.title).toBe("A named milestone");
+      } else if (route.label === "task") {
+        const stored = await call<any>(server.base, "GET", `/api/tasks/${entity.id}`, { token: u.token });
+        expect(stored.data.task.title).toBe("A named task");
+      } else if (route.label === "goal") {
+        const stored = await call<any>(server.base, "GET", `/api/goals/${entity.id}`, { token: u.token });
+        expect(stored.data.goal.title).toBe("A named goal");
+      } else if (route.label === "habit") {
+        const stored = await call<any>(server.base, "GET", "/api/habits", { token: u.token });
+        expect(stored.data.habits.find((h: any) => h.habit.id === entity.id).habit.title).toBe("A named habit");
+      } else {
+        const stored = await call<any>(server.base, "GET", `/api/calendar?from=${Date.now() - DAY}&to=${Date.now() + DAY}`, { token: u.token });
+        expect(stored.data.events.find((e: any) => e.id === entity.id).title).toBe("A named event");
+      }
+    });
+
+    it(`ACC-01: a valid ${route.label} rename persists; an absent title keeps the current name`, async () => {
+      const u = await user();
+      const entity = await route.create(u);
+      const path = route.patch(entity);
+
+      const renamed = await call<any>(server.base, "PATCH", path, { token: u.token, body: { title: `Renamed ${route.label}` } });
+      expect(renamed.status).toBe(200);
+
+      const untouched = await call<any>(server.base, "PATCH", path, {
+        token: u.token,
+        body: route.label === "task" ? { priority: 2 } : {},
+      });
+      expect(untouched.status).toBe(200);
+
+      if (route.label === "milestone") {
+        const goal = await call<any>(server.base, "GET", `/api/goals/${entity.goalId}`, { token: u.token });
+        expect(goal.data.milestones.find((m: any) => m.id === entity.id).title).toBe("Renamed milestone");
+      } else if (route.label === "task") {
+        const stored = await call<any>(server.base, "GET", `/api/tasks/${entity.id}`, { token: u.token });
+        expect(stored.data.task.title).toBe("Renamed task");
+        expect(stored.data.task.priority).toBe(2); // the absent-title patch still applied its own fields
+      } else if (route.label === "goal") {
+        const stored = await call<any>(server.base, "GET", `/api/goals/${entity.id}`, { token: u.token });
+        expect(stored.data.goal.title).toBe("Renamed goal");
+      } else if (route.label === "habit") {
+        const stored = await call<any>(server.base, "GET", "/api/habits", { token: u.token });
+        expect(stored.data.habits.find((h: any) => h.habit.id === entity.id).habit.title).toBe("Renamed habit");
+      } else {
+        const stored = await call<any>(server.base, "GET", `/api/calendar?from=${Date.now() - DAY}&to=${Date.now() + DAY}`, { token: u.token });
+        expect(stored.data.events.find((e: any) => e.id === entity.id).title).toBe("Renamed event");
+      }
+    });
+  }
 });

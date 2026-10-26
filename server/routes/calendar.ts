@@ -13,7 +13,7 @@ import { Router } from "express";
 import type { DB } from "../db";
 import { badRequest, conflict as conflictError, notFound } from "../errors";
 import { rangesOverlap, subtractRanges, totalMinutes, dayKey, dayKeysBetween, dayKeyToInstant, type Range } from "../domain/time";
-import { asString, optionalBool, optionalEnum, optionalInstant, optionalString, requireUser, type AuthedRequest } from "../http";
+import { asString, optionalBool, optionalEnum, optionalInstant, optionalString, optionalTitle, requireUser, type AuthedRequest } from "../http";
 import {
   buildScheduleContext,
   createBlock,
@@ -209,7 +209,7 @@ export function calendarRoutes(db: DB): Router {
       user.id,
       req.params.id,
       {
-        title: optionalString(body.title, "title", 200),
+        title: optionalTitle(body.title, "title", 200),
         startAt: rangeMoves ? startAt : undefined,
         endAt: rangeMoves ? endAt : undefined,
         kind: optionalEnum<"fixed" | "rest_protected" | "rest_soft">(body.kind, "kind", ["fixed", "rest_protected", "rest_soft"]),

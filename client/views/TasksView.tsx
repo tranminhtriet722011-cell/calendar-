@@ -53,7 +53,7 @@ export default function TasksView() {
   const [sessionsCache, setSessionsCache] = useState<Record<string, SessionsEntry>>({});
 
   const [editId, setEditId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ estimatedMinutes: "", dueAt: "", priority: "3", status: "not_started" });
+  const [editForm, setEditForm] = useState({ title: "", estimatedMinutes: "", dueAt: "", priority: "3", status: "not_started" });
   const [editError, setEditError] = useState<string | null>(null);
 
   const [subtaskForms, setSubtaskForms] = useState<Record<string, string>>({});
@@ -112,6 +112,7 @@ export default function TasksView() {
     setEditId(task.id);
     setEditError(null);
     setEditForm({
+      title: task.title,
       estimatedMinutes: String(task.estimatedMinutes),
       dueAt: toDateTimeLocal(task.dueAt),
       priority: String(task.priority),
@@ -125,6 +126,11 @@ export default function TasksView() {
     let current = task;
     const dueAt = fromDateTimeLocal(editForm.dueAt);
     const estimate = parseNumber(editForm.estimatedMinutes);
+    const nextTitle = editForm.title.trim();
+    if (nextTitle === "") {
+      setEditError("Title is required.");
+      return;
+    }
     if (estimate === null || estimate < 0) {
       setEditError("Estimate must be zero or more minutes.");
       return;
@@ -142,10 +148,11 @@ export default function TasksView() {
         priority: Number(editForm.priority),
         revision: current.revision,
       };
+      if (nextTitle !== task.title) patch.title = nextTitle;
       if (editForm.dueAt === "" && task.dueAt !== null) patch.dueAt = null;
       else if (dueAt !== null && dueAt !== task.dueAt) patch.dueAt = dueAt;
-      await apiPatch(`/api/tasks/${encodeURIComponent(task.id)}`, patch);
-      announce(`Task “${task.title}” updated.`, "success");
+      const updated = await apiPatch<{ task: Task }>(`/api/tasks/${encodeURIComponent(task.id)}`, patch);
+      announce(`Task “${updated.task.title}” updated.`, "success");
       setEditId(null);
       state.reload();
     } catch (error) {
@@ -385,6 +392,13 @@ export default function TasksView() {
                     noValidate
                   >
                     <h3>Edit “{task.title}”</h3>
+                    <TextField
+                      id={`edit-title-${task.id}`}
+                      label="Title"
+                      value={editForm.title}
+                      onValueChange={(value) => setEditForm((form) => ({ ...form, title: value }))}
+                      hint="A task always keeps a non-empty title."
+                    />
                     <NumberField
                       id={`edit-est-${task.id}`}
                       label="Estimate (minutes)"

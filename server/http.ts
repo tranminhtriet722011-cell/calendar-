@@ -70,6 +70,20 @@ export function optionalString(value: unknown, field: string, maxLength = 5000):
 }
 
 /**
+ * A title for *update* payloads: absent/undefined keeps the current value, but an empty or
+ * whitespace-only string is a 400 — no entity can lose its name through PATCH (APE-ACCEPT-002
+ * audit: `PATCH {title: ""}` used to answer 200 and blank the record, while creation has always
+ * required a non-empty title).
+ */
+export function optionalTitle(value: unknown, field: string, maxLength = 300): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw badRequest(`${field} must be text.`, { field });
+  if (value.trim().length === 0) throw badRequest(`${field} is required.`, { field });
+  if (value.length > maxLength) throw badRequest(`${field} is too long (max ${maxLength}).`, { field });
+  return value.trim();
+}
+
+/**
  * A cross-entity reference id (`goalId`, `parentId`, `blockId` …). Absent stays `undefined`, an
  * explicit `null` stays `null` (unlink — REV-A-10), and empty/whitespace-only text is rejected up
  * front (REV-A-02: `""` used to slip past the truthy owner checks and detonate as a foreign-key

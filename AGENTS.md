@@ -61,3 +61,10 @@ Delegate independent review or subtasks when suitable tools are available. If a 
 - Do not claim deployment, external connectivity, or production readiness unless actually verified.
 - Submit one consolidated final report covering scope, implementation, acceptance criteria, test evidence, security review, unresolved issues, and next required approval.
 - Do not send routine progress reports or request approval for ordinary implementation steps.
+
+## 8. Tooling — OpenCode Components
+- Agents: `.opencode/agents/ape-builder.md` (primary, executes increments) and `.opencode/agents/ape-reviewer.md` (read-only reviewer subagent). Configuration and permission gates live in `opencode.json`; change a gate only with evidence that it blocks authorized work.
+- Commands (`.opencode/commands/`): `/bootstrap` (environment + config baseline), `/plan-task` (planning only), `/implement` (one bounded increment), `/verify` (run checks, classify, repair, rerun), `/review` (read-only ape-reviewer pass), `/audit` (read-only repository audit), `/release-check` (readiness gates, never releases), `/acceptance` (black-box product verification, never fixes), `/handoff` (consolidated final report only).
+- Skills (`.opencode/skills/*/SKILL.md`): `discovery`, `spec-architecture`, `fullstack-implementation`, `test-repair`, `independent-review`, `security-privacy`, `ui-ux-accessibility`, `release-readiness`, `acceptance-verification`, `final-report`. Each command body names the skill it follows; load the skill before performing the matching work.
+- Conventions: plans and task files in `tasks/`; decisions in `docs/DECISION_LOG.md`; requirement traceability in `docs/spec/APE_V1_1_TRACEABILITY.md`; consolidated final reports in `docs/reports/<TASK-ID>-REPORT.md` (never pushed as part of reporting).
+- Verify tooling changes empirically after editing: the running OpenCode must list new commands and skills (e.g. `opencode api get "/api/command?location[directory]=<repo>"`, `/api/skill`, `opencode debug agents`).

@@ -296,6 +296,7 @@
 - **Trade-offs:** `webfetch`/`websearch` now prompt once per call; acceptable for a local-first project.
 - **Reversal path:** flip individual rules back to `allow`.
 - **Source authority:** contract §4.2; OpenCode V2 permissions documentation; review REV-017.
+- **Amended 2026-10-26:** the `git push *` rule was tightened from `ask` to `deny` during the increment. The Product Owner approved pushing the increment, so the rule now reads `ask` again — every push still requires a fresh interactive approval at execution time, and the change is recorded here rather than made silently.
 
 ## D-031 - The locked-event delete dialog is informational, not destructive
 - **Status:** implemented; proposed-to-Product-Owner.

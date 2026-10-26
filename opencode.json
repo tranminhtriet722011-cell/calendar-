@@ -19,7 +19,7 @@
 
     { "action": "external_directory", "resource": "*", "effect": "ask" },
 
-    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "shell", "resource": "git push *", "effect": "ask" },
     { "action": "shell", "resource": "git remote *", "effect": "ask" },
     { "action": "shell", "resource": "git reset *", "effect": "ask" },
     { "action": "shell", "resource": "git clean *", "effect": "ask" },

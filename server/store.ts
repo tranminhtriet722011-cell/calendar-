@@ -1551,10 +1551,15 @@ export function habitPeriod(
   const periodStart = dayKeyToInstant(periodStartKey, timeZone);
   const periodEnd = dayKeyToInstant(periodEndKey, timeZone);
   // AT33: occurrences inside a pause window follow that window's policy instead of being
-  // silently skipped or silently counted.
+  // silently skipped or silently counted. A CLOSED window is half-open [startedAt, endedAt):
+  // an occurrence at the exact resume instant belongs to "after the pause" (a same-millisecond
+  // post-resume check-in must not be silently excluded). An OPEN window stays inclusive of now.
   const suppressed = (instant: number): boolean =>
     pauses.some(
-      (pause) => pause.policy === "exclude" && pause.startedAt <= instant && instant <= (pause.endedAt ?? nowMs),
+      (pause) =>
+        pause.policy === "exclude" &&
+        pause.startedAt <= instant &&
+        (pause.endedAt === null ? instant <= nowMs : instant < pause.endedAt),
     );
   const inPeriod = checkins.filter(
     (checkin) =>

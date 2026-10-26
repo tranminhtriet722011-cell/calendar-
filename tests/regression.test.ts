@@ -38,7 +38,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { call, registerUser, startTestServer, type TestServer, type TestUser } from "./helpers";
-import { habitPeriod, type Habit } from "../server/store";
+import { habitPeriod, type Habit, type HabitCheckin, type HabitPause } from "../server/store";
 import { dayKey, dayKeyToInstant, shiftDayKey } from "../server/domain/time";
 
 const MIN = 60_000;
@@ -431,6 +431,59 @@ describe("review regressions — habits and undo (REV-006, REV-011)", () => {
     // The week contained a 23-hour day, so it is exactly one hour shorter than 7×24h — the old
     // fixed-millisecond arithmetic put this boundary at 01:00 instead of midnight.
     expect(period.periodEnd - period.periodStart).toBe(7 * DAY - HOUR);
+  });
+
+  it("AT33 boundary: a closed pause window is half-open [startedAt, endedAt); an open window includes now", () => {
+    // Regression for the AT33 flake: a post-resume check-in captured in the SAME millisecond as
+    // the server's endedAt was silently excluded by the old inclusive bound (done 0, expected 1).
+    const zone = "UTC";
+    const now = Date.UTC(2026, 9, 26, 12); // fixed instant: daily period = 2026-10-26 UTC
+    const habit: Habit = {
+      id: "h1",
+      title: "Boundary habit",
+      goalId: null,
+      cadence: "daily",
+      targetCount: 3,
+      minSessionMinutes: 5,
+      maxSessionMinutes: 60,
+      paused: false,
+      pausePolicy: "exclude",
+      revision: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const startedAt = now - 3 * HOUR; // pause opened 09:00
+    const endedAt = now - HOUR; // resume 11:00
+    const pause = (ended: number | null, policy: HabitPause["policy"] = "exclude"): HabitPause => ({
+      id: "pau_1",
+      habitId: "h1",
+      startedAt,
+      endedAt: ended,
+      policy,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    const at = (occurredAt: number): HabitCheckin => ({
+      id: `ck_${occurredAt}`,
+      habitId: "h1",
+      occurredAt,
+      minutes: 5,
+      source: "test",
+      createdAt: 0,
+    });
+
+    // Closed window: inside occurrences are excluded, both edges behave half-open [startedAt, endedAt).
+    expect(habitPeriod(habit, [at(startedAt)], now, zone, [pause(endedAt)]).done).toBe(0);
+    expect(habitPeriod(habit, [at(endedAt - 1)], now, zone, [pause(endedAt)]).done).toBe(0);
+    expect(habitPeriod(habit, [at(endedAt)], now, zone, [pause(endedAt)]).done).toBe(1); // the flake fix
+    expect(habitPeriod(habit, [at(now)], now, zone, [pause(endedAt)]).done).toBe(1); // after resume
+
+    // Open window: the pause is active, so an occurrence at exactly now is still excluded.
+    expect(habitPeriod(habit, [at(now)], now, zone, [pause(null)]).done).toBe(0);
+    expect(habitPeriod(habit, [at(startedAt)], now, zone, [pause(null)]).done).toBe(0);
+
+    // Policy "count" is never suppressed, open or closed.
+    expect(habitPeriod(habit, [at(startedAt)], now, zone, [pause(endedAt, "count")]).done).toBe(1);
   });
 
   it("REV-011: undoing an archive restores the parent AND its cascaded subtasks", async () => {

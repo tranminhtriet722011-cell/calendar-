@@ -355,4 +355,16 @@
 
 ---
 
+## D-037 - APE-ACCEPT-002: titles can never be blanked through PATCH, and pause windows are half-open at the resume instant
+- **Status:** implemented; proposed-to-Product-Owner.
+- **Options considered:** keep the old 200-and-blank behavior for empty titles (rejected - silent data loss); silently keep the current title when an empty string arrives (hides the user's mistake); reject empty/whitespace titles with 400 while absent titles keep the current name (chosen). For AT33: keep the inclusive closed-window bound (keeps the flake); make open windows half-open too (wrong - an open pause is active AT `now`); closed windows half-open `[startedAt, endedAt)` with open windows inclusive of `nowMs` (chosen).
+- **Chosen path:** `optionalTitle` in `server/http.ts` validates every title-bearing PATCH (5 call sites: tasks, goals, milestones, habits, events): empty/whitespace is `400 title is required`, absent/null keeps the stored name, non-text is 400, length checked pre-trim like `asString`; `client/views/TasksView.tsx` gained the edit-form Title field (required, hint, server error surfaced via `role="alert"`). `habitPeriod` in `server/store.ts` treats a CLOSED pause window as half-open `[startedAt, endedAt)` so an occurrence at the exact resume instant counts, while an OPEN window stays inclusive of the evaluation instant.
+- **Rationale:** APE-ACCEPT-002 criterion ACC-01 found `PATCH {title: ""}` answering 200 and blanking records while creation always required a non-empty title; AT33 flaked when a same-millisecond post-resume check-in was excluded by the inclusive bound. One interval convention settles both: `[startedAt, endedAt)` for closed windows, inclusive of `now` while open.
+- **Trade-offs:** clients that previously "cleared" a title with `""` now get a 400 they must handle (the UI edit form does); a check-in stamped exactly at `endedAt` now counts (it is after the pause).
+- **Reversal path:** revert `optionalTitle` to permissive parsing and the inclusive bound in `habitPeriod`; the 10 ACC-01 tests and the AT33 boundary test would then fail, exposing the reversal.
+- **Review dispositions:** ape-reviewer verdict APPROVE (108/108). REV-001 (Medium, PRE-EXISTING): `PATCH /auth/settings` can still store `""` working-hour clocks that parse as 00:00 - routed to backlog, not fixed here (outside ACC-01 scope). REV-002 (Low, NEW): the edit Title field lacked `required` - fixed and re-verified in the browser. REV-003/004 (Info): `optionalTitle` null/pre-trim semantics and two optional edge tests - documented, tests left optional.
+- **Source authority:** APE-ACCEPT-002 acceptance criteria ACC-01 and AT33; independent review pass (2026-10-26) REV-001..REV-004.
+
+---
+
 *Entries are proposals to the Product Owner. No decision here is claimed as user-approved product direction; PO approval may accept, amend, or reject any entry (spec PHẦN O approval rule).*

@@ -397,6 +397,7 @@ export default function TasksView() {
                       label="Title"
                       value={editForm.title}
                       onValueChange={(value) => setEditForm((form) => ({ ...form, title: value }))}
+                      required
                       hint="A task always keeps a non-empty title."
                     />
                     <NumberField

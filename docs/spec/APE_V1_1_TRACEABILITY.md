@@ -25,6 +25,19 @@
 
 Tests run against the real Express app and a real in-memory SQLite database (`tests/helpers.ts`); no layer of the domain is mocked.
 
+## Evidence log — APE-ACCEPT-002 acceptance run (2026-10-26, Windows, Node 24)
+
+| Command | Result |
+|---|---|
+| `npm test` | **108/108 passed** (4 files) — includes the new ACC-01 block (10 tests) and the AT33 boundary test. |
+| `npm run check` (gate: typecheck + tests + build) | **PASSED (exit 0)** — `tsc --noEmit` clean; 108/108; `vite build` + `esbuild` server bundle. |
+| `npx vitest run tests/api-flow.test.ts -t "AT33"` ×20 | **20/20 passed** — no recurrence of the pause flake after the half-open fix. |
+| `node scripts/acceptance/title-probe.mjs` (built artifact, fresh temp DB, port 8788) | **35/35 PASS** — ACC-01 on all 5 title routes + AT33 flow on `dist/server.mjs`. |
+| `node scripts/acceptance/at33-boundary.mjs` | **10/10 PASS** — exact pause-window edges read from SQLite, incl. `at = endedAt → counted` (D-037). |
+| `node scripts/acceptance/at33-loop.mjs` | **40/40 PASS** — pause→check-in behaved on every iteration. |
+| `node scripts/acceptance/persistence.mjs snapshot` → restart → `compare` | **PASS** — 6/6 fact families byte-identical (request-time envelopes normalized); old session token → 200; browser session survived a full reload. |
+| ape-reviewer independent pass | **APPROVE** — 0 Critical/High; 1 Medium PRE-EXISTING (settings clock blanking → backlog), 1 Low NEW (edit Title `required`, fixed + re-verified), 2 Info. |
+
 ## Traceability matrix (AT01–AT55)
 
 ### K1 — Tasks & Goals
@@ -78,7 +91,7 @@ Tests run against the real Express app and a real in-memory SQLite database (`te
 | ID | Acceptance criterion (concise restatement, English) | Spec area / invariants touched | Verification (executed) | Status | Notes |
 |---|---|---|---|---|---|
 | AT32 | A habit with a 4-times-per-week target and 3 completed shows 3/4 and is not auto-marked complete. | H2 habit rules; PO D10 | `api-flow.test` "AT32 — a weekly habit reports 3/4 done, is never auto-completed, and removing a check-in removes one occurrence" | PASS | Weekly count metric; no auto-completion. |
-| AT33 | A 7-day habit pause handles occurrences in that window according to the chosen policy. | H2; E1 HabitDefinition pause | `api-flow.test` "AT33 — occurrences inside a pause window follow the chosen policy (exclude or count)"; `regression.test` "REV-006/AT33: the Today view counts a paused habit by its pause policy, exactly like the habit route" | PASS | Pause policy is explicit; the Today dashboard agrees with the habit route. |
+| AT33 | A 7-day habit pause handles occurrences in that window according to the chosen policy. | H2; E1 HabitDefinition pause | `api-flow.test` "AT33 — occurrences inside a pause window follow the chosen policy (exclude or count)"; `regression.test` "REV-006/AT33: the Today view counts a paused habit by its pause policy, exactly like the habit route"; `regression.test` "AT33 boundary: a closed pause window is half-open [startedAt, endedAt); an open window includes now" (deterministic edge pin added 2026-10-26) | PASS | Pause policy is explicit; the Today dashboard agrees with the habit route; a closed window is half-open so a same-millisecond post-resume check-in counts (D-037). |
 | AT34 | Multiple sessions on the same day count correctly per the metric with no double counting. | H2 occurrence counting | `api-flow.test` "AT34 — several sessions in one day count once each, and an identical repeat is not double counted" | PASS | Deduplication per period. |
 | AT35 | The AI does not silently lower the weekly target when the schedule is busy without permission/approval. | H2; G2 policy; D-003 | `api-flow.test` "AT35 — only an explicit user edit changes the habit target" | PASS | Target changes require user approval. |
 | AT36 | A goal updated by an independent metric is not incorrectly changed when a time block moves. | E2.2; E2.1; H3 | `api-flow.test` "AT36 — moving a session on the calendar never changes goal progress" | PASS | Metric decoupled from scheduling. |

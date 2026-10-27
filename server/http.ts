@@ -84,6 +84,42 @@ export function optionalTitle(value: unknown, field: string, maxLength = 300): s
 }
 
 /**
+ * A plain object for nested settings payloads (`settings.workingHours`, `settings.softRest`):
+ * an omitted section keeps the current one, but `null` or a wrong shape (string, array, number)
+ * is refused exactly like the route's own pre-existing top-level check (`settings must be an
+ * object`, which has always rejected null) — otherwise `workingHours: "08:00"` would dodge every
+ * clock validation below it (FUP-05, APE-ACCEPT-FOLLOWUP-001).
+ */
+export function optionalObject(value: unknown, field: string): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw badRequest(`${field} must be an object.`, { field });
+  }
+  return value as Record<string, unknown>;
+}
+
+/**
+ * A wall-clock time for settings (`workingHours.start/end`, `softRest.start/end`): absent/null
+ * keeps the current value, but anything sent must be a real HH:mm clock inside 00:00–23:59.
+ * REV-001 (APE-ACCEPT-002 review): `""` used to be stored verbatim and the scheduler then read it
+ * as 00:00 through `parseClock` — a silent coercion on a hard-constraint input. The shape regex
+ * alone is not enough: "99:99" matches it and must still be refused, so hour and minute are range
+ * checked separately. Padded (" 08:00 "), short ("8:00"), empty and non-string values are 400s.
+ * No trimming or normalisation happens here — valid input round-trips byte-identical.
+ * `null` means "not sent", exactly like every other optional* helper in this file and like the
+ * `timezone` field in the same route; the empty string is the value that gets rejected.
+ */
+export function optionalClock(value: unknown, field: string): string | undefined {
+  const message = `${field} must be a time in HH:mm format (00:00-23:59).`;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw badRequest(message, { field });
+  const match = /^([0-9]{2}):([0-9]{2})$/.exec(value);
+  if (!match) throw badRequest(message, { field });
+  if (Number(match[1]) > 23 || Number(match[2]) > 59) throw badRequest(message, { field });
+  return value;
+}
+
+/**
  * A cross-entity reference id (`goalId`, `parentId`, `blockId` …). Absent stays `undefined`, an
  * explicit `null` stays `null` (unlink — REV-A-10), and empty/whitespace-only text is rejected up
  * front (REV-A-02: `""` used to slip past the truthy owner checks and detonate as a foreign-key

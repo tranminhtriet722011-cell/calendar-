@@ -4,7 +4,7 @@ import { Router } from "express";
 import type { DB } from "../db";
 import { badRequest, unauthorized } from "../errors";
 import { hashPassword, isStrongEnough, verifyPassword } from "../auth";
-import { asString, optionalString, requireUser, type AuthedRequest } from "../http";
+import { asString, optionalClock, optionalObject, optionalString, requireUser, type AuthedRequest } from "../http";
 import { createSession, createUser, deleteSession, findUserByUsername, updateSettings, DEFAULT_SETTINGS, type AppSettings } from "../store";
 
 const USERNAME_RE = /^[a-zA-Z0-9._-]{3,32}$/;
@@ -66,25 +66,28 @@ export function authRoutes(db: DB): Router {
 
   router.patch("/settings", requireUser(db), (req, res) => {
     const current = (req as unknown as AuthedRequest).user;
-    const incoming = req.body?.settings;
-    if (incoming !== undefined && (typeof incoming !== "object" || incoming === null)) {
-      throw badRequest("settings must be an object.");
-    }
+    const incoming = optionalObject(req.body?.settings, "settings");
+    // REV-001 / FUP-01..05: every section and clock field is validated while the merged object is
+    // built, BEFORE updateSettings is called — a 400 anywhere below therefore leaves the stored
+    // settings byte-identical (no partial write). A malformed section shape is refused too, so a
+    // wrong-typed container cannot silently no-op past its own field validation.
+    const working = optionalObject(incoming?.workingHours, "settings.workingHours");
+    const rest = optionalObject(incoming?.softRest, "settings.softRest");
     const merged: AppSettings = {
       workingHours: {
-        start: optionalString(incoming?.workingHours?.start, "settings.workingHours.start", 8) ?? current.settings.workingHours.start,
-        end: optionalString(incoming?.workingHours?.end, "settings.workingHours.end", 8) ?? current.settings.workingHours.end,
-        days: Array.isArray(incoming?.workingHours?.days)
-          ? incoming.workingHours.days.filter((value: unknown) => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 6)
+        start: optionalClock(working?.start, "settings.workingHours.start") ?? current.settings.workingHours.start,
+        end: optionalClock(working?.end, "settings.workingHours.end") ?? current.settings.workingHours.end,
+        days: Array.isArray(working?.days)
+          ? working.days.filter((value: unknown) => Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 6)
           : current.settings.workingHours.days,
       },
       softRest: {
-        enabled: typeof incoming?.softRest?.enabled === "boolean" ? incoming.softRest.enabled : current.settings.softRest.enabled,
-        start: optionalString(incoming?.softRest?.start, "settings.softRest.start", 8) ?? current.settings.softRest.start,
-        end: optionalString(incoming?.softRest?.end, "settings.softRest.end", 8) ?? current.settings.softRest.end,
+        enabled: typeof rest?.enabled === "boolean" ? rest.enabled : current.settings.softRest.enabled,
+        start: optionalClock(rest?.start, "settings.softRest.start") ?? current.settings.softRest.start,
+        end: optionalClock(rest?.end, "settings.softRest.end") ?? current.settings.softRest.end,
       },
       graceMinutes: Number.isFinite(Number(incoming?.graceMinutes))
-        ? Math.min(120, Math.max(0, Math.round(Number(incoming.graceMinutes))))
+        ? Math.min(120, Math.max(0, Math.round(Number(incoming?.graceMinutes))))
         : current.settings.graceMinutes,
     };
     if (merged.workingHours.days.length === 0) throw badRequest("Select at least one working day.");

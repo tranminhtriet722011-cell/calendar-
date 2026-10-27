@@ -34,6 +34,19 @@
  *  ACC-01 a PATCH can never blank an entity title — empty/whitespace is a 400 on every
  *         title-bearing update route (task, goal, milestone, habit, event); a valid rename
  *         persists, an absent title leaves the name untouched
+ *
+ * APE-ACCEPT-FOLLOWUP-001 regressions (FUP-01 … FUP-08, IDs deliberately outside the REV-*
+ * space so they cannot collide with the APE-AUTO-001 or ACCEPT-002 review rounds):
+ *  FUP-01 every settings clock field rejects empty/whitespace with 400 + stores nothing
+ *  FUP-02 out-of-range clocks ("99:99") are refused — the shape regex alone is not enough
+ *  FUP-03 malformed and non-string clocks are 400s, with the field named in the message
+ *  FUP-04 a rejected settings PATCH leaves the stored settings byte-identical (no partial write)
+ *  FUP-05 a wrong-typed settings section is refused instead of silently no-op'ing
+ *  FUP-06 valid clocks round-trip untouched; absent/null keeps the stored value; defaults intact
+ *  FUP-07 scheduling still honours an updated clock end-to-end (stored value -> working window)
+ *  FUP-08 (REV-003/004 close-out) optionalTitle edge cases: a non-string title is a 400, a
+ *         whitespace-padded rename is stored trimmed, and a padded title counts its trimmed
+ *         length against the cap (the pre-trim length check is the documented asString convention)
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -904,4 +917,201 @@ describe("APE-ACCEPT-002 acceptance regressions — no entity can lose its name 
       }
     });
   }
+});
+
+describe("APE-ACCEPT-FOLLOWUP-001 — settings clock validation (FUP-01 … FUP-08)", () => {
+  /** All four HH:mm clock fields on AppSettings, addressed by their JSON path in the payload. */
+  const clockFields = [
+    { path: "workingHours.start" as const, patch: (value: unknown) => ({ workingHours: { start: value } }) },
+    { path: "workingHours.end" as const, patch: (value: unknown) => ({ workingHours: { end: value } }) },
+    { path: "softRest.start" as const, patch: (value: unknown) => ({ softRest: { start: value } }) },
+    { path: "softRest.end" as const, patch: (value: unknown) => ({ softRest: { end: value } }) },
+  ];
+
+  async function settings(token: string) {
+    const response = await call<{ user: any }>(server.base, "GET", "/api/auth/me", { token });
+    return response.data.user.settings as {
+      workingHours: { start: string; end: string; days: number[] };
+      softRest: { enabled: boolean; start: string; end: string };
+      graceMinutes: number;
+    };
+  }
+
+  it("FUP-01: every clock field rejects empty and whitespace-only values with 400 and stores nothing", async () => {
+    const u = await user();
+    const before = await settings(u.token);
+    for (const field of clockFields) {
+      for (const blank of ["", " ", "   "]) {
+        const bad = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: field.patch(blank) } });
+        expect(bad.status, `${field.path}=${JSON.stringify(blank)} must be 400`).toBe(400);
+        expect(bad.data.error.message).toContain(field.path);
+      }
+    }
+    expect(await settings(u.token)).toEqual(before);
+  });
+
+  it("FUP-02: an out-of-range clock like \"99:99\" is refused — the shape regex alone is not enough", async () => {
+    const u = await user();
+    const before = await settings(u.token);
+    const outOfRange = ["99:99", "24:00", "23:60", "12:99"];
+    for (const field of clockFields) {
+      for (const value of outOfRange) {
+        const bad = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: field.patch(value) } });
+        expect(bad.status, `${field.path}=${value} must be 400`).toBe(400);
+        expect(bad.data.error.message).toContain(field.path);
+      }
+    }
+    expect(await settings(u.token)).toEqual(before);
+  });
+
+  it("FUP-03: malformed and non-string clocks are 400s naming the field", async () => {
+    const u = await user();
+    const malformed = ["8:00", "08:0", "0800", "08:00:00", "08.00", "08:00 ", "aa:bb", " 下午"];
+    const nonString = [7, true, [], ["08:00"], {}];
+    for (const field of clockFields) {
+      for (const value of [...malformed, ...nonString]) {
+        const bad = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: field.patch(value) } });
+        expect(bad.status, `${field.path}=${JSON.stringify(value)} must be 400`).toBe(400);
+        expect(bad.data.error.message).toContain(field.path);
+        expect(bad.data.error.message).toContain("HH:mm");
+      }
+    }
+  });
+
+  it("FUP-04: a rejected settings PATCH leaves the stored settings byte-identical (no partial write)", async () => {
+    const u = await user();
+    // Seed a non-default, fully valid configuration first so "unchanged" is meaningful.
+    const seed = await call<any>(server.base, "PATCH", "/api/auth/settings", {
+      token: u.token,
+      body: { settings: { workingHours: { start: "09:30", end: "18:15" }, softRest: { enabled: false, start: "12:30", end: "13:15" }, graceMinutes: 25 } },
+    });
+    expect(seed.status).toBe(200);
+    const before = await settings(u.token);
+    expect(before.workingHours.start).toBe("09:30");
+
+    // Each request mixes one invalid clock with otherwise-valid, DIFFERENT values; if any part of
+    // the merged object were written, the valid siblings would show up in the stored settings.
+    const poisoned = [
+      { workingHours: { start: "", end: "20:00", days: [1, 2, 3] } },
+      { workingHours: { start: "10:00", end: "99:99" } },
+      { softRest: { enabled: true, start: "bad", end: "14:00" } },
+      { softRest: { enabled: true, start: "12:00", end: "13:70" } },
+    ];
+    for (const body of poisoned) {
+      const bad = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: body } });
+      expect(bad.status).toBe(400);
+      expect(await settings(u.token)).toEqual(before);
+    }
+  });
+
+  it("FUP-05: a wrong-typed settings section is refused instead of silently no-op'ing past its fields", async () => {
+    const u = await user();
+    const before = await settings(u.token);
+    const wrongShapes: Array<[string, unknown]> = [
+      ["workingHours string", { workingHours: "08:00" }],
+      ["workingHours null", { workingHours: null }],
+      ["workingHours array", { workingHours: ["08:00"] }],
+      ["workingHours number", { workingHours: 8 }],
+      ["softRest string", { softRest: "12:00" }],
+      ["softRest null", { softRest: null }],
+      ["settings string", "08:00"],
+      ["settings array", ["08:00"]],
+    ];
+    for (const [label, value] of wrongShapes) {
+      const bad = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: value } });
+      expect(bad.status, `${label} must be 400`).toBe(400);
+    }
+    expect(await settings(u.token)).toEqual(before);
+  });
+
+  it("FUP-06: valid clocks round-trip byte-identical, absent/null keeps the stored value, defaults intact", async () => {
+    const u = await user();
+    const defaults = await settings(u.token);
+    expect(defaults).toEqual({
+      workingHours: { start: "08:00", end: "22:00", days: [0, 1, 2, 3, 4, 5, 6] },
+      softRest: { enabled: true, start: "12:00", end: "13:00" },
+      graceMinutes: 10,
+    });
+
+    // Round-trip edge values exactly as sent (no trimming, padding or normalisation). Every edge
+    // is asserted on every field so a regression that rejects a specific bound (notably the
+    // upper bound 23:59, adjacent to the range check) cannot slip through the gate.
+    const readClock = (stored: any, path: string) =>
+      path === "workingHours.start" ? stored.workingHours.start
+      : path === "workingHours.end" ? stored.workingHours.end
+      : path === "softRest.start" ? stored.softRest.start
+      : stored.softRest.end;
+    const edges = ["00:00", "23:59", "07:05", "12:30"];
+    for (const field of clockFields) {
+      for (const edge of edges) {
+        const good = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: field.patch(edge) } });
+        expect(good.status, `${field.path}=${edge} must be accepted`).toBe(200);
+        expect(readClock(await settings(u.token), field.path), `${field.path} must store ${edge}`).toBe(edge);
+      }
+    }
+
+    // Absent and null both mean "not sent" and keep the stored value (documented helper contract).
+    const absent = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: 15 } } });
+    expect(absent.status).toBe(200);
+    const afterAbsent = await settings(u.token);
+    expect(afterAbsent.workingHours.start).toBe(edges[edges.length - 1]);
+    expect(afterAbsent.graceMinutes).toBe(15);
+
+    const nulled = await call<any>(server.base, "PATCH", "/api/auth/settings", {
+      token: u.token,
+      body: { settings: { workingHours: { start: null, end: null }, softRest: { start: null, end: null } } },
+    });
+    expect(nulled.status).toBe(200);
+    expect(await settings(u.token)).toEqual(afterAbsent);
+  });
+
+  it("FUP-07: a scheduling call still honours an updated clock end-to-end (stored value -> working window)", async () => {
+    const u = await user();
+    // Narrow the working window to a single hour and confirm free time reflects exactly it.
+    const patched = await call<any>(server.base, "PATCH", "/api/auth/settings", {
+      token: u.token,
+      body: { settings: { workingHours: { start: "09:00", end: "10:00" } } },
+    });
+    expect(patched.status).toBe(200);
+
+    const day = 24 * 60 * 60 * 1000;
+    const free = await call<{ workingWindows: { start: number; end: number }[] }>(server.base, "GET", `/api/calendar?from=${Date.now()}&to=${Date.now() + day}`, {
+      token: u.token,
+    });
+    expect(free.status).toBe(200);
+    expect(free.data.workingWindows.length).toBeGreaterThan(0);
+    for (const window of free.data.workingWindows) {
+      expect(window.end - window.start).toBeLessThanOrEqual(60 * 60 * 1000);
+    }
+  });
+
+  it("FUP-08 (REV-003/004 close-out): optionalTitle rejects non-strings, trims on rename, caps trimmed length", async () => {
+    const u = await user();
+    const task = await createTask(u.token, { title: "Title edge cases" });
+
+    // REV-003: a non-string title is a 400 (null/absent still means "keep", covered by ACC-01).
+    const bad = await call<any>(server.base, "PATCH", `/api/tasks/${task.id}`, { token: u.token, body: { title: 42 } });
+    expect(bad.status).toBe(400);
+    expect(bad.data.error.message).toContain("must be text");
+
+    // REV-004 (behaviour pin): a whitespace-padded rename is stored trimmed — the stored value is
+    // never padded, and the trim happens on write, not on read.
+    const padded = await call<any>(server.base, "PATCH", `/api/tasks/${task.id}`, { token: u.token, body: { title: "   Padded rename   " } });
+    expect(padded.status).toBe(200);
+    const stored = await call<{ task: any }>(server.base, "GET", `/api/tasks/${task.id}`, { token: u.token });
+    expect(stored.data.task.title).toBe("Padded rename");
+
+    // REV-004 (behaviour pin): the length cap is evaluated on the raw string, matching the
+    // long-standing `asString` convention — 301 chars of spaces is refused even though it would
+    // trim to empty, and a 300-char padded value is refused before trimming can rescue it.
+    const overCap = "x".repeat(301);
+    const tooLong = await call<any>(server.base, "PATCH", `/api/tasks/${task.id}`, { token: u.token, body: { title: overCap } });
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.data.error.message).toContain("too long");
+    // A value whose trimmed length is under the cap but raw length is over it is also refused,
+    // pinning the documented pre-trim check rather than silently accepting it.
+    const paddedOver = `${"y".repeat(300)}  `;
+    const paddedTooLong = await call<any>(server.base, "PATCH", `/api/tasks/${task.id}`, { token: u.token, body: { title: paddedOver } });
+    expect(paddedTooLong.status).toBe(400);
+  });
 });

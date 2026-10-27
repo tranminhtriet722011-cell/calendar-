@@ -109,16 +109,28 @@ async function acc01(label, create, patchPath, readTitle) {
 }
 
 // --- AT33 on the built artifact ---
+// Timestamp source: pause.started_at / ended_at are stamped with the SERVER process clock, and
+// on this host the server clock reads 1-4 ms AHEAD of any other Node process (measured: the
+// server's /api/health echo is already in the client's future in 37/40 round trips). A check-in
+// stamped with the client's Date.now() immediately after pausing could therefore land a few ms
+// BEFORE started_at and be counted - which is precisely the rule at33-boundary pins
+// (at = startedAt - 1 -> counted), not a suppression bug. To make this probe's INPUT
+// deterministic the check-ins are stamped with the server's own clock (the same clock that
+// opened and closed the window); the assertions below are unchanged.
+const serverNow = async () => (await req("GET", "/api/health")).data?.time ?? Date.now();
 {
   let r = await req("POST", "/api/habits", { token, body: { title: "AT33 live habit", cadence: "weekly", targetCount: 4 } });
   const h = pick(r.data, "habit");
   const p1 = await req("PATCH", `/api/habits/${h.id}`, { token, body: { paused: true, revision: h.revision } });
   ok("AT33 pause -> 200", p1.status === 200, `status=${p1.status}`);
-  r = await req("POST", `/api/habits/${h.id}/checkins`, { token, body: { minutes: 5, at: Date.now() } });
+  const atDuring = await serverNow();
+  r = await req("POST", `/api/habits/${h.id}/checkins`, { token, body: { minutes: 5, at: atDuring } });
   ok("AT33 during pause -> done 0", r.data?.period?.done === 0, `done=${r.data?.period?.done}`);
   const res2 = await req("PATCH", `/api/habits/${h.id}`, { token, body: { paused: false, revision: pick(p1.data, "habit")?.revision } });
   ok("AT33 resume -> 200", res2.status === 200, `status=${res2.status}`);
-  r = await req("POST", `/api/habits/${h.id}/checkins`, { token, body: { minutes: 5, at: Date.now() } });
+  // +1 keeps the second occurrence distinct from the first so AT34 dedup cannot merge them.
+  const atAfter = Math.max(await serverNow(), atDuring + 1);
+  r = await req("POST", `/api/habits/${h.id}/checkins`, { token, body: { minutes: 5, at: atAfter } });
   ok("AT33 after resume -> done 1", r.data?.period?.done === 1, `done=${r.data?.period?.done}`);
 }
 

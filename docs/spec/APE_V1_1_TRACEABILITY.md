@@ -38,6 +38,27 @@ Tests run against the real Express app and a real in-memory SQLite database (`te
 | `node scripts/acceptance/persistence.mjs snapshot` → restart → `compare` | **PASS** — 6/6 fact families byte-identical (request-time envelopes normalized); old session token → 200; browser session survived a full reload. |
 | ape-reviewer independent pass | **APPROVE** — 0 Critical/High; 1 Medium PRE-EXISTING (settings clock blanking → backlog), 1 Low NEW (edit Title `required`, fixed + re-verified), 2 Info. |
 
+## Evidence log — APE-ACCEPT-FOLLOWUP-001 final verification run (2026-10-27, Windows, Node 24.22.0, npm 11.19.1)
+
+All runs below executed against the exact final build (`dist/server.mjs` + `dist/client/`, rebuilt 2026-10-27 12:31) from git HEAD `a08846b` plus the uncommitted delta, on an **isolated fresh temp DB** (`%TEMP%\ape-followup001.db`, port 8788). `data/ape.db` was never touched (it does not exist).
+
+| Command / action | Result |
+|---|---|
+| `npm test` | **116/116 passed** (4 files) — baseline 108 + **8 new FUP tests** (FUP-01…FUP-08); nothing weakened (test diff purely additive). |
+| `npm run check` (typecheck + tests + vite build + esbuild) | **PASSED (exit 0)** — `tsc --noEmit` clean; 116/116; client bundle + `dist/server.mjs` rebuilt. |
+| `node scripts/acceptance/settings-clock-probe.mjs` (new, built artifact) | **9/9 PASS** — 52/52 invalid clocks → 400, every 400 names its field, stored settings byte-identical after rejects, 6/6 wrong-shaped sections → 400, valid clocks stored verbatim, `null` keeps value, `00:00`/`23:59` accepted. |
+| `node scripts/acceptance/security-probe.mjs` (new, promoted from a temp script) | **8/8 PASS** — unauth 401, foreign/unknown 404 with identical oracle, foreign PATCH no-write, export credential-freeness. |
+| `node scripts/acceptance/title-probe.mjs` | **35/35 PASS** — ACC-01 on all 5 title routes + AT33 flow on the final artifact. |
+| `node scripts/acceptance/at33-boundary.mjs` | **10/10 PASS** — exact pause-window edges incl. `at = endedAt → counted` (D-037 half-open fix). |
+| `node scripts/acceptance/at33-loop.mjs` | **40/40 PASS** — pause→check-in behaved on every iteration. |
+| `node scripts/acceptance/persistence.mjs snapshot` → **stop server** → **restart same temp DB** → `compare` | **PASS 6/6** — all fact families byte-identical after restart; old session token → 200. |
+| Browser journey (Chromium via harness, fresh user `fupuser01`) | register/sign-in, empty states, quick-add, goal, 3-proposal plan preview, commit + audit, undo, double-undo rejection, session start/work-log/complete, recovery proposals, stale-edit two-tab conflict, E3 guard, calendar lock, overlap 409, two-step override + `schedule.exception`, habit 0→1→2 of 3 — **all PASS** (per-flow rows in the report). |
+| Accessibility — Lighthouse (axe-based) on Today/Calendar/Tasks/Goals/Habits/Activity | **PASS** — Accessibility score **1.0** on all 6 views, 0 a11y failures (only non-a11y SEO findings: missing meta description, robots.txt). |
+| 320 px viewport check | **NOT VERIFIED** — no viewport/device-emulation tool exists; Lighthouse explicitly does not emulate a device; the harness blocks same-origin iframe emulation (`chrome-error`). Manual/static checks only: correct `width=device-width` viewport meta, an explicit `(max-width: 30rem)` = 480 px breakpoint labelled "down to 320px" that collapses grids/stacks rows, no fixed-px overflow risks (all fluid widths + a safe `max-width`). |
+| Single-origin | **PASS** — 1 origin (`http://127.0.0.1:8788`), 0 external origins, all scripts self-hosted. |
+| Offline behaviour | **PASS** — server stopped: already-loaded SPA surfaces an accessible `role="alert"` "⚠ Error: Request failed with status 502." and preserves form input (no crash/data loss); a cold reload shows a clean browser error page; **no phantom write** after restart (offline-created task absent). |
+| ape-reviewer independent pass (delta) | **APPROVE WITH COMMENTS** — 0 Critical / 0 High / 1 Medium (doc gap) / 4 Low / 3 Info; all dispositions recorded in D-038. |
+
 ## Traceability matrix (AT01–AT55)
 
 ### K1 — Tasks & Goals

@@ -1036,15 +1036,26 @@ describe("APE-ACCEPT-FOLLOWUP-001 — settings clock validation (FUP-01 … FUP-
     // Round-trip edge values exactly as sent (no trimming, padding or normalisation). Every edge
     // is asserted on every field so a regression that rejects a specific bound (notably the
     // upper bound 23:59, adjacent to the range check) cannot slip through the gate.
+    //
+    // APE-BATCH-003 / D-039 amended the loop: start/end are now an ordered pair, so each field's
+    // edges are pinned against a companion clock that keeps the pair valid (start edges with
+    // end "23:59", end edges with start "00:00"). Every still-valid value round-trips byte-
+    // identical exactly as before; the two extremes with no valid partner (start "23:59", end
+    // "00:00") are pinned as 400s by B3-04 instead.
     const readClock = (stored: any, path: string) =>
       path === "workingHours.start" ? stored.workingHours.start
       : path === "workingHours.end" ? stored.workingHours.end
       : path === "softRest.start" ? stored.softRest.start
       : stored.softRest.end;
-    const edges = ["00:00", "23:59", "07:05", "12:30"];
+    const startEdges = ["00:00", "07:05", "12:30", "23:58"];
+    const endEdges = ["00:01", "07:05", "12:30", "23:59"];
     for (const field of clockFields) {
+      const section = field.path.startsWith("workingHours") ? "workingHours" : "softRest";
+      const isStart = field.path.endsWith(".start");
+      const edges = isStart ? startEdges : endEdges;
       for (const edge of edges) {
-        const good = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: field.patch(edge) } });
+        const pair = isStart ? { [section]: { start: edge, end: "23:59" } } : { [section]: { start: "00:00", end: edge } };
+        const good = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: pair } });
         expect(good.status, `${field.path}=${edge} must be accepted`).toBe(200);
         expect(readClock(await settings(u.token), field.path), `${field.path} must store ${edge}`).toBe(edge);
       }
@@ -1054,7 +1065,9 @@ describe("APE-ACCEPT-FOLLOWUP-001 — settings clock validation (FUP-01 … FUP-
     const absent = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: 15 } } });
     expect(absent.status).toBe(200);
     const afterAbsent = await settings(u.token);
-    expect(afterAbsent.workingHours.start).toBe(edges[edges.length - 1]);
+    // Last pair written by the loop above: start "00:00" (end-edge companion), end "23:59".
+    expect(afterAbsent.workingHours.start).toBe("00:00");
+    expect(afterAbsent.workingHours.end).toBe("23:59");
     expect(afterAbsent.graceMinutes).toBe(15);
 
     const nulled = await call<any>(server.base, "PATCH", "/api/auth/settings", {
@@ -1113,5 +1126,167 @@ describe("APE-ACCEPT-FOLLOWUP-001 — settings clock validation (FUP-01 … FUP-
     const paddedOver = `${"y".repeat(300)}  `;
     const paddedTooLong = await call<any>(server.base, "PATCH", `/api/tasks/${task.id}`, { token: u.token, body: { title: paddedOver } });
     expect(paddedTooLong.status).toBe(400);
+  });
+});
+
+/**
+ * APE-BATCH-003 regressions (B3-*, IDs deliberately outside the REV / FUP / ACC id spaces):
+ *  B3-01 graceMinutes rejects empty/whitespace/non-number shapes with 400 naming the field
+ *  B3-02 graceMinutes refuses out-of-range values instead of silently clamping (REV-FUP-04 close)
+ *  B3-03 graceMinutes null/absent keeps the stored value; valid integers round-trip
+ *  B3-04 an inverted or zero-width working/rest window is a 400 naming the field (D-039)
+ *  B3-05 a rejected settings PATCH still leaves stored settings byte-identical (no partial write)
+ *  B3-06 scheduling never sees a negative/zero-width working window (end-to-end pin of D-039)
+ */
+describe("APE-BATCH-003 — settings validation hardening (B3-01 … B3-06)", () => {
+  async function settings(token: string) {
+    const response = await call<{ user: any }>(server.base, "GET", "/api/auth/me", { token });
+    return response.data.user.settings as {
+      workingHours: { start: string; end: string; days: number[] };
+      softRest: { enabled: boolean; start: string; end: string };
+      graceMinutes: number;
+    };
+  }
+
+  it("B3-01: graceMinutes rejects empty/whitespace/non-number shapes with 400 naming the field", async () => {
+    const u = await user();
+    const before = await settings(u.token);
+    // The shapes the old Number()-coercion accepted as 0/1/NaN: "" -> 0, " " -> 0, "25" -> 25,
+    // true -> 1, [] -> 0, [25] -> 25, {} -> NaN (kept current), {valueOf:...} -> coerced.
+    const bad: Array<[string, unknown]> = [
+      ["empty string", ""],
+      ["whitespace", "   "],
+      ["numeric string", "25"],
+      ["boolean true", true],
+      ["boolean false", false],
+      ["empty array", []],
+      ["number array", [25]],
+      ["object", {}],
+    ];
+    for (const [label, value] of bad) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: value } } });
+      expect(r.status, `graceMinutes=${label} must be 400`).toBe(400);
+      expect(r.data.error.message).toContain("settings.graceMinutes");
+      expect(r.data.error.details?.field).toBe("settings.graceMinutes");
+    }
+    expect(await settings(u.token)).toEqual(before);
+  });
+
+  it("B3-02: graceMinutes refuses out-of-range values instead of silently clamping (REV-FUP-04)", async () => {
+    const u = await user();
+    const before = await settings(u.token);
+    // Range is checked on the ROUNDED value (documented contract): -0.6 rounds to -1 -> refused,
+    // but -0.4 rounds to 0 and 120.4 rounds to 120, both in range -> accepted.
+    for (const value of [-1, -0.6, 121, 120.6, 999, 10_000]) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: value } } });
+      expect(r.status, `graceMinutes=${value} must be 400 (was silently clamped before)`).toBe(400);
+      expect(r.data.error.message).toContain("settings.graceMinutes");
+    }
+    expect(await settings(u.token)).toEqual(before);
+
+    // Fractional minutes round to the nearest whole minute, then the range applies.
+    for (const [value, stored] of [[-0.4, 0], [120.4, 120], [25.6, 26]] as Array<[number, number]>) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: value } } });
+      expect(r.status, `graceMinutes=${value} must be accepted`).toBe(200);
+      expect((await settings(u.token)).graceMinutes).toBe(stored);
+    }
+  });
+
+  it("B3-03: graceMinutes null/absent keeps the stored value; valid integers round-trip", async () => {
+    const u = await user();
+    // Seed a non-default value first so "keep" is meaningful.
+    const seeded = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: 42 } } });
+    expect(seeded.status).toBe(200);
+    expect((await settings(u.token)).graceMinutes).toBe(42);
+
+    const nulled = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: null } } });
+    expect(nulled.status).toBe(200);
+    expect((await settings(u.token)).graceMinutes).toBe(42);
+
+    const absent = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { workingHours: { start: "09:00" } } } });
+    expect(absent.status).toBe(200);
+    expect((await settings(u.token)).graceMinutes).toBe(42);
+
+    // Both bounds are accepted (the range is the product's long-standing 0–120 clamp).
+    for (const value of [0, 120]) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { graceMinutes: value } } });
+      expect(r.status, `graceMinutes=${value} must be accepted`).toBe(200);
+      expect((await settings(u.token)).graceMinutes).toBe(value);
+    }
+  });
+
+  it("B3-04: an inverted or zero-width working/rest window is a 400 naming the field (D-039)", async () => {
+    const u = await user();
+    const before = await settings(u.token);
+    const cases: Array<[string, unknown, string]> = [
+      ["workingHours inverted (22:00->08:00)", { workingHours: { start: "22:00", end: "08:00" } }, "settings.workingHours.end"],
+      ["workingHours equal (08:00->08:00)", { workingHours: { start: "08:00", end: "08:00" } }, "settings.workingHours.end"],
+      ["softRest inverted (13:00->12:00)", { softRest: { start: "13:00", end: "12:00" } }, "settings.softRest.end"],
+      ["softRest equal (12:00->12:00)", { softRest: { start: "12:00", end: "12:00" } }, "settings.softRest.end"],
+      // The ordering rule must run on the MERGED pair: a partial patch that would invert the
+      // stored window is refused too (start alone, end alone).
+      ["start-only patch inverting stored end", { workingHours: { start: "23:30" } }, "settings.workingHours.end"],
+      ["end-only patch before stored start", { workingHours: { end: "07:00" } }, "settings.workingHours.end"],
+    ];
+    for (const [label, body, field] of cases) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: body } });
+      expect(r.status, `${label} must be 400`).toBe(400);
+      expect(r.data.error.message).toContain(field);
+    }
+    expect(await settings(u.token)).toEqual(before);
+
+    // The former extremes with no valid partner (start 23:59, end 00:00) are now 400s too.
+    for (const body of [{ workingHours: { start: "23:59" } }, { workingHours: { end: "00:00" } }]) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: body } });
+      expect(r.status).toBe(400);
+    }
+  });
+
+  it("B3-05: a rejected settings PATCH leaves stored settings byte-identical (no partial write)", async () => {
+    const u = await user();
+    const seed = await call<any>(server.base, "PATCH", "/api/auth/settings", {
+      token: u.token,
+      body: { settings: { workingHours: { start: "09:30", end: "18:15" }, softRest: { enabled: false, start: "12:30", end: "13:15" }, graceMinutes: 25 } },
+    });
+    expect(seed.status).toBe(200);
+    const before = await settings(u.token);
+
+    // Each body mixes one invalid value with otherwise-valid, DIFFERENT siblings; if any part of
+    // the merged object were written, the valid siblings would show up in the stored settings.
+    const poisoned: unknown[] = [
+      { graceMinutes: 999, workingHours: { start: "10:00" }, softRest: { enabled: true } },
+      { graceMinutes: "", softRest: { enabled: true, start: "12:00" } },
+      { workingHours: { start: "22:00", end: "08:00", days: [1, 2, 3] }, graceMinutes: 5 },
+      { softRest: { start: "13:00", end: "12:00", enabled: true }, graceMinutes: 60 },
+    ];
+    for (const body of poisoned) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: body } });
+      expect(r.status, `${JSON.stringify(body)} must be 400`).toBe(400);
+      expect(await settings(u.token)).toEqual(before);
+    }
+  });
+
+  it("B3-06: scheduling never sees a negative/zero-width working window (end-to-end pin of D-039)", async () => {
+    const u = await user();
+    await call<any>(server.base, "POST", "/api/tasks", { token: u.token, body: { title: "B3 scheduling task", estimatedMinutes: 30 } });
+
+    // The inverted window is refused at the settings boundary, so the stored config stays valid...
+    const inverted = await call<any>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: { settings: { workingHours: { start: "22:00", end: "08:00" } } } });
+    expect(inverted.status).toBe(400);
+
+    // ...and every working window the scheduler receives has positive width.
+    const from = Date.now();
+    const to = from + 2 * DAY;
+    const cal = await call<{ workingWindows: { start: number; end: number }[] }>(server.base, "GET", `/api/calendar?from=${from}&to=${to}`, { token: u.token });
+    expect(cal.status).toBe(200);
+    expect(cal.data.workingWindows.length).toBeGreaterThan(0);
+    for (const window of cal.data.workingWindows) {
+      expect(window.end - window.start, `window ${new Date(window.start).toISOString()} must have positive width`).toBeGreaterThan(0);
+    }
+
+    // A plan over that horizon is still computable and honest (no crash, real feasibility).
+    const plan = await call<any>(server.base, "POST", "/api/schedule/plan", { token: u.token, body: { from, to } });
+    expect(plan.status).toBe(200);
+    expect(typeof plan.data.feasibility?.feasible).toBe("boolean");
   });
 });

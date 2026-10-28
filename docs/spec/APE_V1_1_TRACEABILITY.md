@@ -59,6 +59,27 @@ All runs below executed against the exact final build (`dist/server.mjs` + `dist
 | Offline behaviour | **PASS** — server stopped: already-loaded SPA surfaces an accessible `role="alert"` "⚠ Error: Request failed with status 502." and preserves form input (no crash/data loss); a cold reload shows a clean browser error page; **no phantom write** after restart (offline-created task absent). |
 | ape-reviewer independent pass (delta) | **APPROVE WITH COMMENTS** — 0 Critical / 0 High / 1 Medium (doc gap) / 4 Low / 3 Info; all dispositions recorded in D-038. |
 
+## Evidence log — APE-BATCH-003 push + Phase 1 provenance + Phase 2 hardening (2026-10-28, Windows, Node 24.22.0, npm 11.19.1)
+
+Phase 0 push ran against the configured remote `origin`, branch `main` with upstream (plain `git push`, no force/tags/new remote/branch deletion — exactly the PO authorization). Phase 1 provenance and Phase 2 runs executed against the built artifact on an **isolated fresh temp DB** (`%TEMP%\ape-batch003-phase2.db`, port 8788). `data/ape.db` was never touched (it does not exist).
+
+| Command / action | Result |
+|---|---|
+| **Phase 0** — pre-flight `git status -sb` / `git log origin/main..HEAD` / `git log -5 --oneline` | clean tree, `main...origin/main` in sync at `162e959`, 5 unpushed accepted commits, `data/` absent. |
+| **Phase 0** — `npm run check` (pre-push) | **exit 0** — 116/116 tests. |
+| **Phase 0** — plain `git push` of the 5 accepted commits | **PASSED** — `162e959..04f1805  main -> main`; post-check `git status -sb` = `## main...origin/main`; `git log origin/main..HEAD` empty. AC01/AC10 (first push) VERIFIED. |
+| **Phase 1a** — clean-tree `npm run check` + rebuild | **exit 0**; rebuilt sha256 identical to the 13:01 artifact (below) → source-equivalent (only `docs/` changed in `04f1805`). |
+| **Phase 1a** — sha256 provenance | `dist/server.mjs` `CDEB19B9…D0A993` (150235 B); `index.html` `1A265E0E…4416D` (455 B); `index-3KTc5oFt.css` `3428A5EE…12B6714` (7873 B); `index-Bb2QX7pF.js` `402AF1AF…90F693F` (301646 B) — sizes + content-hash names identical to the 13:01 build. |
+| **Phase 1a** — fresh-DB smoke (`%TEMP%\ape-batch003-smoke.mjs`) | **10/10** — register 201+token, quick-add 201, plan 200 (3 proposals, feasibility true), commit 200 with `auditId`, undo 200, double-undo 409 `already_undone`, offline network-error basis. |
+| **Phase 1a** — all `scripts/acceptance/` probes on fresh DB | title **35/35**, at33-boundary **10/10**, at33-loop **40/40**, settings-clock **9/9** (pre-extension), security **8/8**, persistence snapshot→stop→restart→compare **6/6**, single-origin static (0 external URLs, no CORS headers). |
+| **Phase 1b** — AT33 during-pause location | located in `scripts/acceptance/title-probe.mjs` top-level block `// --- AT33 on the built artifact ---` (lines 121–135), assertion `"AT33 during pause -> done 0"`; commit `031e8f4` changed the check-in `at` from `Date.now()` to `serverNow()` (server clock via `GET /api/health`) — **assertions unchanged**. AC03 clarified. |
+| **Phase 1c** — check-in `at` audit (report-only) | `optionalInstant` accepts any finite number; spec defines no future/past bounds (AT33/AT34 define pause/dedup only); period counting uses server `Date.now()` so a future `at` lands in a future period harmlessly; calendar events/blocks enforce `endAt > startAt` (H7); plan requires `to > from`. **No spec violation; no code change.** |
+| **Phase 2** — `npm test` | **122/122 passed** (4 files) — baseline **116** + **6 new B3 tests** (B3-01…B3-06); FUP-06 amended for the D-039 ordering rule (disclosed, no assertion relaxed — every still-valid edge still round-trips byte-identical). |
+| **Phase 2** — `npm run check` | **PASSED (exit 0)** — `tsc --noEmit` clean; 122/122; client bundle + `dist/server.mjs` rebuilt. |
+| **Phase 2** — `node scripts/acceptance/settings-clock-probe.mjs` (extended, built artifact, fresh DB) | **18/18 PASS** — 52/52 invalid clocks → 400 all naming their field, byte-identical after rejects, 6/6 wrong-shaped sections → 400, valid clocks stored verbatim, `null` keeps, `00:00`/`23:59` accepted, **11/11 invalid `graceMinutes` → 400 all naming `settings.graceMinutes`**, bounds 0/120 + rounding accepted, `null` keeps, **6/6 inverted/equal windows → 400 naming the end field**, re-reject byte-identical, valid ordered window still accepted. |
+| **Phase 2** — D-039 characterization (temp script, built artifact) | `workingHours 22:00→08:00` → negative-width (−840 min) working window silently dropped by free-slot math ("Only 0 free minutes"); `08:00→08:00` → zero-width windows, same silent drop. Overnight **NOT** handled correctly → rejected (D-039). |
+| **Phase 2** — `workingHours.days` audit | spec defines no valid values; invalid entries silently filtered (REV-FUP-08 disposition stands). **Documented only, no code change.** |
+
 ## Traceability matrix (AT01–AT55)
 
 ### K1 — Tasks & Goals

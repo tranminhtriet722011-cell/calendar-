@@ -3,6 +3,10 @@
 // byte-identical (no partial write). Replaces the ad-hoc probe that previously lived only in a
 // temp file, so the check is reproducible from the repository.
 //
+// APE-BATCH-003 (D-039/D-040) adds: strict graceMinutes (non-number/out-of-range are 400s,
+// null/absent keeps) and the window-ordering rule (start < end for workingHours and softRest,
+// equal and inverted windows refused, validated on the merged pair).
+//
 //   APE_BASE=http://127.0.0.1:8788 node scripts/acceptance/settings-clock-probe.mjs
 const base = process.env.APE_BASE ?? "http://127.0.0.1:8788";
 const results = [];
@@ -75,6 +79,62 @@ ok("null keeps the stored value", nulled.status === 200 && (await me()).workingH
 // Edge values round-trip exactly (no coercion of 00:00 / 23:59).
 const edge = await req("PATCH", "/api/auth/settings", { token, body: { settings: { workingHours: { start: "00:00", end: "23:59" } } } });
 ok("00:00 and 23:59 accepted", edge.status === 200 && (await me()).workingHours.start === "00:00" && (await me()).workingHours.end === "23:59", `status=${edge.status}`);
+
+// --- APE-BATCH-003: strict graceMinutes (D-040) ---
+const graceBad = ["", " ", "25", true, false, [], [25], {}, -1, 121, 999];
+let graceRejected = 0;
+let graceNamed = 0;
+for (const value of graceBad) {
+  const r = await req("PATCH", "/api/auth/settings", { token, body: { settings: { graceMinutes: value } } });
+  if (r.status === 400) graceRejected++;
+  if ((r.data?.error?.message ?? "").includes("settings.graceMinutes")) graceNamed++;
+}
+ok("all invalid graceMinutes -> 400", graceRejected === graceBad.length, `${graceRejected}/${graceBad.length}`);
+ok("every graceMinutes 400 names the field", graceNamed === graceBad.length, `${graceNamed}/${graceBad.length}`);
+const graceBefore = JSON.stringify(await me());
+ok("stored settings unchanged after grace rejects", JSON.stringify(await me()) === graceBefore, graceBefore.slice(0, 120));
+const graceBounds = [
+  [0, 0], [120, 120], [25.6, 26],
+];
+let graceAccepted = 0;
+for (const [value, stored] of graceBounds) {
+  const r = await req("PATCH", "/api/auth/settings", { token, body: { settings: { graceMinutes: value } } });
+  if (r.status === 200 && (await me()).graceMinutes === stored) graceAccepted++;
+}
+ok("graceMinutes bounds 0/120 + rounding accepted", graceAccepted === graceBounds.length, `${graceAccepted}/${graceBounds.length}`);
+const graceNulled = await req("PATCH", "/api/auth/settings", { token, body: { settings: { graceMinutes: null } } });
+ok("graceMinutes null keeps stored value", graceNulled.status === 200 && (await me()).graceMinutes === 26, `status=${graceNulled.status} grace=${(await me()).graceMinutes}`);
+
+// --- APE-BATCH-003: window ordering (D-039) ---
+// Reset a known baseline first: the partial-patch cases ("start-only inverts stored end") are
+// only invalid relative to the STORED partner, and the edge test above left end=23:59.
+const baseline = await req("PATCH", "/api/auth/settings", { token, body: { settings: { workingHours: { start: "08:00", end: "22:00" } } } });
+if (baseline.status !== 200) console.log(`  note: baseline reset -> status=${baseline.status}`);
+const orderBad = [
+  ["workingHours inverted", { workingHours: { start: "22:00", end: "08:00" } }],
+  ["workingHours equal", { workingHours: { start: "08:00", end: "08:00" } }],
+  ["softRest inverted", { softRest: { start: "13:00", end: "12:00" } }],
+  ["softRest equal", { softRest: { start: "12:00", end: "12:00" } }],
+  ["start-only inverts stored end", { workingHours: { start: "23:30" } }],
+  ["end-only before stored start", { workingHours: { end: "07:00" } }],
+];
+let orderRejected = 0;
+let orderNamed = 0;
+for (const [label, patch] of orderBad) {
+  const r = await req("PATCH", "/api/auth/settings", { token, body: { settings: patch } });
+  if (r.status === 400) orderRejected++;
+  const msg = r.data?.error?.message ?? "";
+  if (msg.includes("settings.workingHours.end") || msg.includes("settings.softRest.end")) orderNamed++;
+  if (r.status !== 400) console.log(`  note: ${label} -> status=${r.status}`);
+}
+ok("inverted/equal windows -> 400", orderRejected === orderBad.length, `${orderRejected}/${orderBad.length}`);
+ok("every ordering 400 names the end field", orderNamed === orderBad.length, `${orderNamed}/${orderBad.length}`);
+const orderSnapshot = JSON.stringify(await me());
+const orderRejectAgain = await req("PATCH", "/api/auth/settings", { token, body: { settings: { workingHours: { start: "22:00", end: "08:00" } } } });
+ok("re-reject leaves settings byte-identical", orderRejectAgain.status === 400 && JSON.stringify(await me()) === orderSnapshot, JSON.stringify(await me()).slice(0, 120));
+// A valid ordered pair still works after all the rejects.
+const ordered = await req("PATCH", "/api/auth/settings", { token, body: { settings: { workingHours: { start: "09:00", end: "17:00" } } } });
+ok("valid ordered window still accepted", ordered.status === 200 && (await me()).workingHours.start === "09:00" && (await me()).workingHours.end === "17:00", `status=${ordered.status}`);
 
 const fails = results.filter((x) => x.status === "FAIL");
 for (const x of results) console.log(`${x.status}  ${x.name}  [${x.detail}]`);

@@ -4,7 +4,7 @@ import { Router } from "express";
 import type { DB } from "../db";
 import { badRequest, unauthorized } from "../errors";
 import { hashPassword, isStrongEnough, verifyPassword } from "../auth";
-import { asString, optionalClock, optionalObject, optionalString, requireUser, type AuthedRequest } from "../http";
+import { asString, optionalClock, optionalIntStrict, optionalObject, optionalString, requireUser, type AuthedRequest } from "../http";
 import { createSession, createUser, deleteSession, findUserByUsername, updateSettings, DEFAULT_SETTINGS, type AppSettings } from "../store";
 
 const USERNAME_RE = /^[a-zA-Z0-9._-]{3,32}$/;
@@ -86,10 +86,25 @@ export function authRoutes(db: DB): Router {
         start: optionalClock(rest?.start, "settings.softRest.start") ?? current.settings.softRest.start,
         end: optionalClock(rest?.end, "settings.softRest.end") ?? current.settings.softRest.end,
       },
-      graceMinutes: Number.isFinite(Number(incoming?.graceMinutes))
-        ? Math.min(120, Math.max(0, Math.round(Number(incoming?.graceMinutes))))
-        : current.settings.graceMinutes,
+      // D-040 (APE-BATCH-003): strict like the clock fields — `""`, `" "`, `"25"`, `true`, `[]`
+      // and out-of-range values are 400s naming the field, not silent coercions (REV-FUP-04).
+      // Absent/null keeps the stored value. The 0–120 bounds are the clamp this input has carried
+      // since the first vertical slice, promoted from silent clamping to explicit validation.
+      graceMinutes: optionalIntStrict(incoming?.graceMinutes, "settings.graceMinutes", 0, 120)
+        ?? current.settings.graceMinutes,
     };
+    // D-039 (APE-BATCH-003): an inverted or zero-width window used to pass through here and reach
+    // the scheduler as a negative-width range that free-slot arithmetic silently drops (measured
+    // live: 22:00→08:00 produced a −840-minute working window and "Only 0 free minutes"; 08:00→08:00
+    // produced zero-width windows). Overnight windows are NOT handled correctly, so per the
+    // decision rule both inverted and equal windows are refused with a 400 naming the field —
+    // validated on the MERGED values so a partial patch cannot smuggle an inversion past it.
+    if (merged.workingHours.start >= merged.workingHours.end) {
+      throw badRequest("`settings.workingHours.end` must be after `settings.workingHours.start`.", { field: "settings.workingHours.end" });
+    }
+    if (merged.softRest.start >= merged.softRest.end) {
+      throw badRequest("`settings.softRest.end` must be after `settings.softRest.start`.", { field: "settings.softRest.end" });
+    }
     if (merged.workingHours.days.length === 0) throw badRequest("Select at least one working day.");
     const timezone = optionalString(req.body?.timezone, "timezone", 64);
     if (timezone !== undefined) {

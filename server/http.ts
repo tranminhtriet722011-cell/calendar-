@@ -149,6 +149,25 @@ export function optionalInt(value: unknown, field: string, min = 0, max = 1_000_
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
+/**
+ * APE-BATCH-003 (D-040): the strict sibling of `optionalInt` for settings inputs that must never
+ * be coerced silently (`graceMinutes`). Absent/null keeps the current value, exactly like every
+ * other optional* helper here; anything else must be a real JSON number — `""`, `" "`, `"25"`,
+ * `true`, `[]` and `{}` are 400s naming the field, not values that `Number()` happens to turn
+ * into 0/1/NaN. The rounded value must land inside [min, max]; out-of-range is refused instead
+ * of silently clamped, so a client can never believe it stored 999 when the server kept 120.
+ * The 0–120 range is the clamp this input has carried since the first vertical slice — it is the
+ * product's existing bound, not a new invention (the product spec defines no numeric range).
+ */
+export function optionalIntStrict(value: unknown, field: string, min: number, max: number): number | undefined {
+  const message = `${field} must be a whole number between ${min} and ${max}.`;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) throw badRequest(message, { field });
+  const rounded = Math.round(value);
+  if (rounded < min || rounded > max) throw badRequest(message, { field });
+  return rounded;
+}
+
 export function optionalBool(value: unknown, field: string): boolean | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "boolean") throw badRequest(`${field} must be true or false.`, { field });

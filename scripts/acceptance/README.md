@@ -1,4 +1,4 @@
-# Acceptance probes (APE-ACCEPT-002 / APE-ACCEPT-FOLLOWUP-001 / APE-BATCH-003)
+# Acceptance probes (APE-ACCEPT-002 / APE-ACCEPT-FOLLOWUP-001 / APE-BATCH-003 / APE-BATCH-004)
 
 Black-box probes run against the BUILT artifact on a throwaway database. They never touch the
 developer's real `data/ape.db`. Server under test:
@@ -19,6 +19,7 @@ node dist/server.mjs
 | `security-probe.mjs` | Unauth 401, foreign/unknown ID 404 with an identical oracle, foreign PATCH writes nothing, export carries no credentials | 8/8 PASS |
 | `persistence.mjs snapshot` / `compare` | Stop → restart on the same DB: **8** fact families byte-identical (incl. `settings` and `workSessions`, added in APE-BATCH-003), request-time envelopes normalized, old session still valid | `PERSISTENCE PASS: all 8 fact families`, old session 200 |
 | `viewport-320-probe.mjs` | Real 320×640 device emulation over the Chrome DevTools Protocol: each of the 6 views must render its expected `h1` and have `document.scrollWidth <= 320`; also reports clipped text and tap targets < 24 px (screenshots + `results.json` in the output dir) | `SUMMARY: 6/6 views have scrollWidth <= 320`, exit 0 |
+| `ui-journey.mjs` (APE-BATCH-004) | Full UI journey driven through real headless Chrome (CDP) on a fresh temp DB + fresh throwaway user — registers through the auth gate, then drives Today/Tasks/Goals/Calendar/Habits/Activity: quick-add, estimate/due edit, plan→3 proposals, infeasible shortfall with named reasons, apply/undo/double-undo-withdrawn, recovery, log+complete, two-tab stale-edit `role="alert"`, E3 illegal-transition `role="alert"`, locked-event→overlap 409→two-step override→audit, habit 0→1→2, offline error+retry + single-origin. Drives the interface (clicks/types/DOM), not raw HTTP | `SUMMARY: 19/19 UI journey flows PASS`, exit 0 |
 
 Run (server must be listening):
 
@@ -32,10 +33,14 @@ node scripts/acceptance/persistence.mjs snapshot   # before restart
 # ... stop the server, restart it on the same APE_DB_FILE ...
 node scripts/acceptance/persistence.mjs compare    # after restart
 node scripts/acceptance/viewport-320-probe.mjs     # needs local Chrome, exit 1 on any view > 320 px
+node scripts/acceptance/ui-journey.mjs             # needs local Chrome; drives the UI over CDP, exit 1 on any flow FAIL
 ```
 
 Environment overrides: `APE_BASE` (default `http://127.0.0.1:8788`), `APE_DB_FILE` (default
 `%TEMP%\ape-accept002-new.db`), `APE_PERSIST_FILE` (snapshot path), `APE_PROBE_USER` /
 `APE_PROBE_PASS` (probe credentials — any registered test user; use throwaway values). The
 viewport probe additionally accepts `APE_CHROME` (Chrome/Chromium path, autodetected otherwise),
-`APE_320_OUT` (screenshot/output directory) and `APE_CDP_PORT` (default 9333).
+`APE_320_OUT` (screenshot/output directory) and `APE_CDP_PORT` (default 9333). The UI journey
+accepts `APE_CHROME` (autodetected), `APE_CDP_PORT` (default 9444 — use a different port from the
+viewport probe) and `APE_UI_OUT` (output dir for `results.json`, default
+`%TEMP%\ape-ui-journey`); it registers its own throwaway user, so it needs no `APE_PROBE_USER`.

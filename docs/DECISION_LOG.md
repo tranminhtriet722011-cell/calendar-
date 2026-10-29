@@ -407,4 +407,81 @@
 
 ---
 
+## D-041 - APE-BATCH-004: the Product Owner accepts all seven default recommendations from APE-BATCH-003 (section K)
+
+- **Status:** PO decision recorded (explicit authorization, APE-BATCH-004 section 0).
+- **Context:** APE-BATCH-003 report section K listed seven open decisions, each with a recommended
+  default. The PO accepts all seven as recommended:
+  1. **D-039 overnight windows stay refused** (400 on inverted/equal working or rest windows)
+     pending a spec decision on wrap-around semantics - the rejection is kept, not relaxed.
+  2. **D-040 `graceMinutes` stays strict with range 0-120** (validated on the rounded value).
+  3. **`workingHours.days` stays documented-only** - no invented validation without spec text.
+  4. **Settings scope at the time of the recommendation (API-only) is accepted as recorded**, and
+     is immediately superseded in scope by D-042 below - the PO accepts the recommendation as it
+     stood and then exercises its authority to change the scope for this increment.
+  5. **The FUP-06 test amendment is accepted** as disclosed (nothing weakened or deleted).
+  6. **The five deferred ATs (AT20/46/47/48/54) stay deferred** under D-006.
+  7. **`softRest` ordering stays enforced even while rest is disabled** (uniform stored validity).
+- **Options considered:** reject one or more defaults (not chosen - the PO accepted all); defer the
+  whole decision set (not chosen - it would block APE-BATCH-004 scope clarity).
+- **Chosen path:** record the acceptance verbatim so later increments cannot silently reopen these.
+- **Rationale:** closes section K of APE-BATCH-003 with an explicit authority statement rather than
+  an inferred silence.
+- **Trade-offs / disclosure:** none new - every trade-off was already disclosed in D-039/D-040 and
+  in the APE-BATCH-003 report sections E.2 and I.
+- **Reversal path:** a later PO decision superseding this entry; entries 1, 2, 5 and 7 are each
+  pinned by failing tests/probes if reversed (B3-01..B3-06, FUP-06, settings-clock-probe).
+- **Evidence:** APE-BATCH-003 report `docs/reports/APE-BATCH-003-REPORT.md` section K (the seven
+  decisions) and section J (push state at that time).
+- **Source authority:** PO instruction for APE-BATCH-004, section 0.
+
+---
+
+## D-042 - APE-BATCH-004: the Settings screen restriction in impl-spec 11.1 is lifted; scope for this increment
+
+- **Status:** PO decision recorded (explicit authorization, APE-BATCH-004 section 0).
+- **Context:** impl-spec 11.1 states "Settings are API-only ... the client has no settings screen
+  in this increment". The PO lifts that restriction for APE-BATCH-004 and authorizes, in order:
+  (1) a **Settings screen**, (2) **calendar move/resize UI** because the specs do define it
+  (master spec F6 "manual drag/resize/create/delete"; AT09/AT14; impl-spec 10 R-4 resolves it as
+  explicit start/end edits plus conflict warning and confirm - so no drag-and-drop is required),
+  (3) a **committed UI journey probe** (`scripts/acceptance/ui-journey.mjs`), and (4) **release
+  hygiene** (README quick-start verified on a fresh clone, audit report, doc reconciliation).
+- **Scope of the Settings screen (fields that exist in the API today):** timezone, working hours
+  (`workingHours.start/end/days`), protected/soft rest (`softRest.enabled/start/end`), the planning
+  grace window (`graceMinutes`), and a "download my data" control backed by `GET /api/export`
+  (the master-spec Settings tree lists "Data & privacy / export"; `export` is implemented, deletion
+  is not - see impl-spec 7).
+- **Explicitly NOT authorized for this increment:** AI features or AI settings (the master-spec
+  "AI permissions / model consent / usage" branch stays absent), external calendar sync, offline
+  queue, multi-device merge, backup/restore (deferred ATs), overnight window semantics (D-041.1),
+  notifications (no API exists), locale (no field exists), deploy/publish/production, paid
+  services, a new remote, or force-push.
+- **Options considered:** build the full master-spec Settings tree including AI/notifications
+  (rejected - not authorized, and no API backs several branches); build only timezone (rejected -
+  too narrow for the authorized scope); build the settings screen from the existing
+  `PATCH /api/auth/settings` contract only (chosen - no invented fields, no AI toggles).
+- **Chosen path:** implement a Settings view over the existing contract, keep every server
+  validation rule as the single source of truth, surface server 400s by field via `role="alert"`,
+  and refuse partial saves; wire calendar event move/resize through the existing
+  `PATCH /api/calendar/events/:id` (override + confirm + audit already implemented server-side).
+- **Rationale:** the PO owns scope (AGENTS.md section 1); the specs already define both features,
+  so this is authorization to implement, not to invent.
+- **Trade-offs / disclosure:** (1) the master-spec Settings tree still has two branches with no
+  implementation and no authorized scope - **Notifications** and **Connected calendars** - they stay
+  absent and must not be implied by the new screen; (2) `locale` has no stored field, so the screen
+  cannot offer it; (3) until this decision, working hours kept their registration default unless the
+  API was called directly (impl-spec 11.1) - after this increment the UI can change them, so the
+  limitation text in the spec and the Vietnamese product description must be reconciled with
+  executed evidence, never before.
+- **Reversal path:** restore the 11.1 wording and delete `client/views/SettingsView.tsx`; the UI
+  journey Settings flows and the 320 px/Lighthouse rows for the Settings view would then fail,
+  exposing the reversal.
+- **Evidence:** to be attached in the APE-BATCH-004 report (AC03/AC04) after execution - this
+  entry records authority, not results.
+- **Source authority:** PO instruction for APE-BATCH-004, section 0 (scope authorized); master spec
+  Settings tree; impl-spec 10 R-4 and 11.1.
+
+---
+
 *Entries are proposals to the Product Owner. No decision here is claimed as user-approved product direction; PO approval may accept, amend, or reject any entry (spec PHẦN O approval rule).*

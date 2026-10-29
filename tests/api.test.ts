@@ -4,7 +4,7 @@
  * matrix for the full mapping). Nothing here mocks the domain layer.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { call, registerUser, startTestServer, type TestServer, type TestUser } from "./helpers";
@@ -561,6 +561,19 @@ describe("B3-07: no external dependency — single origin, no external AI provid
   const PROVIDER = /\b(openai|anthropic|claude|gemini|groq|mistral|cohere|bedrock|azure[-_ ]?openai)\b/i;
 
   /**
+   * The built-output checks read `dist/`, which is gitignored and (after this task) produced by
+   * `npm run build` BEFORE `npm run test` inside `npm run check` - so the suite always validates the
+   * artifact it just built rather than a stale one. On a bare `npm test` without a build, fail with
+   * an instruction instead of an opaque ENOENT from deep inside a test.
+   */
+  function distFile(path: string): string {
+    if (!existsSync(path)) {
+      throw new Error(`missing build output ${path} - run "npm run build" first (npm run check does this automatically)`);
+    }
+    return readFileSync(path, "utf8");
+  }
+
+  /**
    * Only files this repository authors are scanned. Vendored React lives inside the minified Vite
    * bundle and legitimately contains inert URL strings (React's own error docs, e.g.
    * "https://react.dev/errors/<code>"); those are message text, never a network call, so scanning
@@ -587,6 +600,9 @@ describe("B3-07: no external dependency — single origin, no external AI provid
   function productFilesFrom(roots: string[]): Array<{ path: string; text: string }> {
     const out: Array<{ path: string; text: string }> = [];
     const walk = (dir: string) => {
+      if (!existsSync(dir)) {
+        throw new Error(`missing build output ${dir} - run "npm run build" first (npm run check does this automatically)`);
+      }
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
         if (entry.isDirectory()) { walk(full); continue; }
@@ -598,7 +614,7 @@ describe("B3-07: no external dependency — single origin, no external AI provid
     return out;
   }
 
-  it("B3-07a: no shipped source or built asset references an external origin", async () => {
+  it("B3-07a: no authored client/server source references an external origin", async () => {
     const offenders: string[] = [];
     for (const file of productFiles()) {
       // A source map's trailing URL is a file path, not a network dependency.
@@ -617,28 +633,49 @@ describe("B3-07: no external dependency — single origin, no external AI provid
     expect(offenders, `AI provider markers found:\n${offenders.join("\n")}`).toEqual([]);
   });
 
-  it("B3-07b2: any external URL inside the vendored bundle is inert (string only, never fetched)", async () => {
-    // Vendored React ships error-doc URLs as plain strings. They must stay inert: no beacon, no
-    // dynamic image, no stylesheet import, no injected <link>. If one of those ever appeared next
-    // to an external origin, that origin would be a live dependency and this test would fail.
-    const clientAssets = productFilesFrom(["dist/client"]).filter((f) => /\.(js|css|html)$/.test(f.path));
-    const live = /\b(sendBeacon|new\s+Image\s*\(|importScripts\s*\(|@import|<link\b|link\.rel\s*=)/i;
+  it("B3-07b2: an external URL in the built client assets is never handed to a transfer API", async () => {
+    // Vendored React ships error-doc URLs as plain strings (e.g. "https://react.dev/errors/<code>").
+    // Those are message text and must stay inert. What this pins is the behavioural promise: an
+    // external URL may exist as a string, but nothing may pass it to an API that actually transfers
+    // data to it. Checked per OCCURRENCE - the URL must appear INSIDE a live call's argument list,
+    // or be assigned to .src/.href, or appear in injected markup/styles. A whole-file co-occurrence
+    // (any live API anywhere in a file that also contains any external URL) would false-positive on
+    // React's inert URL next to the app's own same-origin fetch(...), so it is deliberately not used.
+    // Transfer surfaces covered: fetch / sendBeacon / EventSource / importScripts / WebSocket /
+    // new Image called with the URL in their parens, xhr-style .open("verb", url), element .src or
+    // .href assignment, @import, and an injected <link href|src="...">.
+    const LIVE_PREFIX = [
+      /\b(?:fetch|sendBeacon|EventSource|importScripts|WebSocket|new\s+Image)\s*\(\s*["'`][^)]{0,500}?/i,
+      /\b[\w$]+\.open\s*\(\s*["'`][^)]{0,500}?/i,
+      /\.(?:src|href)\s*=\s*["'`]/i,
+      /@import\b[^;{}]{0,200}?/i, // @import "...", @import url(...), and the escaped JS-string form
+      /<link\b[^>]{0,300}?\b(?:href|src)\s*=\s*["'`]/i,
+    ];
+    const LIVE_URL = new RegExp(`(?:${LIVE_PREFIX.map((r) => r.source).join("|")})${EXTERNAL.source}`, "i");
     const offenders: string[] = [];
-    for (const file of clientAssets) {
-      const urls = [...file.text.matchAll(EXTERNAL_G)].map((m) => m[0]);
-      if (urls.length && live.test(file.text)) offenders.push(`${file.path} -> ${urls[0]}`);
+    for (const file of productFilesFrom(["dist/client"])) {
+      if (!/\.(js|css|html)$/.test(file.path)) continue;
+      const match = file.text.match(LIVE_URL);
+      if (match) offenders.push(`${file.path} -> ${match[0].slice(0, 160)}`);
     }
-    expect(offenders, `live external references found:\n${offenders.join("\n")}`).toEqual([]);
+    expect(offenders, `external URL passed to a live transfer API:\n${offenders.join("\n")}`).toEqual([]);
   });
 
   it("B3-07d: the built client HTML loads only same-origin assets (no CDN, no web font, no analytics)", async () => {
-    const html = readFileSync("dist/client/index.html", "utf8");
+    const html = distFile("dist/client/index.html");
     const external = [...html.matchAll(EXTERNAL_G)].map((m) => m[0]);
     expect(external, `external references in index.html:\n${external.join("\n")}`).toEqual([]);
-    // Every asset it does reference must resolve to a file that exists in the build output.
-    for (const [, src] of html.matchAll(/<script[^>]+src="([^"]+)"/g)) {
-      if (/^https?:\/\//.test(src)) throw new Error(`script src is absolute/external: ${src}`);
+    // Every asset it references must be same-origin AND actually present in the build output -
+    // a same-origin path that resolves to nothing would be a broken build, not a CDN, but it is
+    // still a defect this guard should catch while it is already parsing the tag list.
+    const referenced: string[] = [];
+    for (const [, src] of html.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/g)) {
+      if (/^(?:https?:)?\/\//.test(src)) throw new Error(`script/style src is absolute/external: ${src}`);
+      const file = src.startsWith("/") ? `dist/client${src}` : `dist/client/${src}`;
+      if (!existsSync(file)) throw new Error(`index.html references ${src} but ${file} does not exist`);
+      referenced.push(src);
     }
+    expect(referenced.length, "index.html must reference at least its entry script and stylesheet").toBeGreaterThanOrEqual(2);
   });
 
   it("B3-07c: the built server bundle makes no outbound (client-side) network call", async () => {
@@ -646,10 +683,13 @@ describe("B3-07: no external dependency — single origin, no external AI provid
     // node:http to LISTEN (createServer), which is inbound; only a client call is outbound. So the
     // guard flags fetch()/request()/get()/connect()/WebSocket in the bundle and tolerates the
     // node:http import as long as it is never used as a client.
-    const bundle = readFileSync("dist/server.mjs", "utf8");
+    // Coverage boundary (disclosed, REV-R309): the bundle is built with --packages=external, so it
+    // contains this repository's authored code only - a dependency's own egress can never appear
+    // here by construction. What this scans for is AUTHORED outbound calls, including a bare
+    // fetch(<expr>) with no literal (hence the unanchored pattern alongside the literal ones).
+    const bundle = distFile("dist/server.mjs");
     const egress = [
-      /\bawait\s+fetch\s*\(/,           // global fetch used as a client
-      /\bfetch\s*\(\s*["'`]/,            // fetch with a URL literal
+      /\bfetch\s*\(/,                     // any fetch in authored server code
       /\bhttp(?:s)?\.request\s*\(/,      // node:http(s) client request
       /\bhttp(?:s)?\.get\s*\(/,          // node:http(s) client get
       /\bnew\s+WebSocket\s*\(/,          // websocket client

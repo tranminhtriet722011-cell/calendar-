@@ -54,8 +54,9 @@ developer). Chi tiết bằng chứng nằm ở mục 5.
 - Sự kiện cố định (fixed), ngày nghỉ (rest), và **khung giờ làm việc tự đặt** (work block).
 - Xung đột lịch được **báo cáo**, không bao giờ bị ghi đè trong im lặng.
 - Tính thời gian trống (free time) dựa trên cửa sổ làm việc và các sự kiện đã khóa.
-- Khóa/mở khóa/xóa sự kiện từ giao diện; di chuyển và thay đổi kích thước sự kiện được máy chủ
-  kiểm tra bằng cùng bộ validator xung đột.
+- Khóa/mở khóa/xóa sự kiện từ giao diện. Việc **di chuyển / thay đổi kích thước** được máy chủ
+  kiểm tra bằng cùng bộ validator xung đột khi gọi API tương ứng — nhưng giao diện kéo-thả cho
+  thao tác đó **chưa được dựng** (xem mục 4).
 
 ### 2.4 Mục tiêu (Goals)
 - Theo chỉ số **số lượng (count)** hoặc **cột mốc (milestone)**.
@@ -100,12 +101,12 @@ developer). Chi tiết bằng chứng nằm ở mục 5.
 
 | Hạng mục | Kết quả (đã chạy) |
 |---|---|
-| Bộ kiểm thử Vitest (toàn bộ) | **122/122 bài đạt** (4 tệp) — đường cơ sở 116 + 6 bài mới của APE-BATCH-003 |
+| Bộ kiểm thử Vitest (toàn bộ) | **128/128 bài đạt** (4 tệp) — đường cơ sở 116 + 6 bài của Phase 2 (D-039/D-040) + 6 bài của Phase 4 (B3-07 guard đơn nguồn, B3-08 đọc 1 mục timeline) |
 | `npm run check` (kiểu + kiểm thử + dựng) | **exit 0** |
 | Accessibility — Lighthouse trên 6 chế độ xem (Today, Calendar, Tasks, Goals, Habits, Activity) | **1.0/1.0 trên cả 6 chế độ xem**, 0 lỗi accessibility |
 | 320 px — kiểm tra responsive thật (Chromium headless, mô phỏng 320×640) | **6/6 chế độ xem** `scrollWidth ≤ 320`; **0** chữ bị cắt, **0** vùng chạm < 24 px, **0** cuộn ngang cấp trang |
 | Bảo mật — security probe | **8/8 PASS** (401 chưa đăng nhập; 404 "không tìm thấy" đồng nhất với 404 lạ — không dò được dữ liệu; PATCH của người khác không ghi gì; export không lộ thông tin xác thực) |
-| Persistence — dừng → khởi động lại cùng DB | **6/6 PASS** toàn bộ dữ kiện byte-identical; phiên cũ vẫn còn hiệu lực |
+| Persistence — dừng → khởi động lại cùng DB | **8/8 PASS** toàn bộ dữ kiện byte-identical (trong đó có 2 nhóm dữ kiện mới được bổ sung: cài đặt người dùng và nhật ký công sức); phiên cũ vẫn còn hiệu lực |
 | Single-origin — không nguồn bên ngoài | **PASS** — 0 nguồn bên ngoài, mọi script tự lưu trữ |
 
 **Lưu ý trung thực về 320 px:** phép kiểm trước đây **không xác minh được** vì thiếu công cụ mô
@@ -123,6 +124,9 @@ trong đặc tả triển khai §1.2 (D-006) và các mục tương ứng:
 - **Không có màn hình "Cài đặt" (Settings screen)** trong giao diện. Cài đặt (giờ làm việc, giờ nghỉ,
   vùng ân hạn `graceMinutes`, múi giờ) chỉ thao tác qua **API**. *(Đặc tả §11.1.)*
 - **Không có đồng bộ lịch bên ngoài** (Google / Apple / CalDAV).
+- **Chưa có giao diện kéo-thả để di chuyển hoặc thay đổi kích thước khối/sự kiện.** Máy chủ vẫn
+  kiểm tra xung đột (và từ chối với 409) khi gọi API tương ứng, nhưng thao tác này chưa có nút bấm
+  trong giao diện. Khóa/mở khóa/xóa sự kiện thì có.
 - **Không có hàng đợi ngoại tuyến (offline queue)** và **không có đồng bộ đa thiết bị** — ứng dụng
   hiển thị lỗi rõ ràng khi mất mạng, nhưng **không xếp hàng các thay đổi để đồng bộ sau**.
 - **Không có ứng dụng Android gốc** — chỉ có giao diện web.
@@ -145,9 +149,10 @@ trong đặc tả triển khai §1.2 (D-006) và các mục tương ứng:
   `docs/reports/APE-ACCEPT-FOLLOWUP-001-REPORT.md`.
 - **Nhật ký quyết định:** `docs/DECISION_LOG.md` (D-001 … D-040), trong đó có các quyết định
   **D-038/D-039/D-040** về kiểm tra chặt chẽ cài đặt đồng hồ và thứ tự cửa sổ.
-- **Probe acceptance có thể chạy lại:** `scripts/acceptance/README.md` mô tả 6 probe
-  (`title`, `at33-boundary`, `at33-loop`, `settings-clock`, `security`, `persistence`) và số
-  kết quả mong đợi của từng cái.
+- **Probe acceptance có thể chạy lại:** `scripts/acceptance/README.md` mô tả 7 probe
+  (`title`, `at33-boundary`, `at33-loop`, `settings-clock`, `security`, `persistence`,
+  `viewport-320`) và số kết quả mong đợi của từng cái — trong đó `viewport-320` chính là phép
+  kiểm 320 px đã được cam kết vào kho lưu trữ ở trên.
 
 **Cách chạy thử trên máy của bạn:**
 

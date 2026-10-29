@@ -247,11 +247,14 @@ audit row (spec scopes audit to *schedule* changes); no Settings screen (§11.1)
 | Push | Range | Result |
 |---|---|---|
 | Phase 0 (authorized backlog push) | `162e959..04f1805` | **accepted**, `git log origin/main..HEAD` empty afterwards |
-| Final push (this task's 5 commits + this report) | see below | **accepted** — plain `git push`, no force/tags/remote/deletion; `git log origin/main..HEAD` **empty** after the push, re-verified after the closing update |
+| Final push #1 (5 task commits + this report) | `04f1805..d646bce` | **accepted** (`main -> main`, exit 0); `git log origin/main..HEAD` **empty** — verified immediately after |
+| Final push #2 (this closing update recording push #1) | the commit carrying this text (child of `d646bce`) | **accepted** (plain push); `git log origin/main..HEAD` **empty** — verified again after the last push of this effort |
 
 Local commits in this task's delta: `5113418` (Phase 2), `f640d60` (Phase 3), `c1767f7` (Phase 4),
-`ab0dec8` (gap table), `da666dc` (review dispositions) + this report commit. No force, no tag, no
-new remote, no branch deletion was used at any point; work was preserved on every step.
+`ab0dec8` (gap table), `da666dc` (review dispositions), `d646bce` (this report) + this closing
+update. No force, no tag, no new remote, no branch deletion was used at any point; work was
+preserved on every step. Rejection handling was never needed — but had a push been rejected, the
+authorization was to preserve the work, record it, and mark AC10 BLOCKED rather than force-push.
 
 ---
 

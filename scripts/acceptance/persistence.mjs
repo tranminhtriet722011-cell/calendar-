@@ -37,6 +37,17 @@ async function fetchAll(token) {
   out.calendar = (await req("GET", `/api/calendar?from=${Date.now() - 7 * 86400000}&to=${Date.now() + 7 * 86400000}`, { token })).data;
   out.activity = (await req("GET", "/api/activity?limit=200", { token })).data;
   out.today = (await req("GET", "/api/calendar/today", { token })).data;
+  // B3-09 (APE-BATCH-003): work sessions and user settings are stored facts too. Neither was in
+  // any stop/restart probe, so a restart that lost effort logs or reverted the user's working
+  // hours would have come back "byte-identical". Sessions are read per task, so the task ids from
+  // the list above drive the read; settings ride on /api/auth/me.
+  out.settings = (await req("GET", "/api/auth/me", { token })).data;
+  const taskIds = Array.isArray(out.tasks?.tasks) ? out.tasks.tasks.map((t) => t.id) : [];
+  const sessions = {};
+  for (const id of taskIds) {
+    sessions[id] = (await req("GET", `/api/tasks/${id}/sessions`, { token })).data;
+  }
+  out.workSessions = sessions;
   return out;
 }
 

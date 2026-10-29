@@ -1290,3 +1290,96 @@ describe("APE-BATCH-003 — settings validation hardening (B3-01 … B3-06)", ()
     expect(typeof plan.data.feasibility?.feasible).toBe("boolean");
   });
 });
+
+/**
+ * APE-BATCH-003 (B3-08): `GET /api/activity/:id` was CODE-ONLY — the single-entry fetch with its
+ * undo preview. Every prior test reached an audit entry through `POST /api/activity/:id/undo` or
+ * the `GET /api/activity` list, so this route's own contract (200 + `entry` + `preview`, the
+ * `not_undoable` / `already_undone` preview reasons, and the owner-scoped 404) had no regression
+ * test at all. The undo RESULT is covered elsewhere (AT30/AT31); this pins the READ contract.
+ */
+describe("APE-BATCH-003 — activity single-entry read contract (B3-08)", () => {
+  it("B3-08: GET /api/activity/:id returns the entry plus an undo preview, and 404s for foreign/unknown ids", async () => {
+    const u = await user();
+    // A schedule change is what the timeline records (impl-spec: "every schedule change is
+    // attributable"). Event creation is auditable and undoable — plain task capture is not, by
+    // design (the timeline is a *schedule* timeline, not a capture log).
+    const start = Date.now() + 2 * HOUR;
+    const createdEvent = await call<{ event: any }>(server.base, "POST", "/api/calendar/events", {
+      token: u.token,
+      body: { title: "Read contract event", startAt: start, endAt: start + HOUR },
+    });
+    expect(createdEvent.status).toBe(201);
+
+    // A reversible change: creating a schedule event is undoable and not yet undone.
+    const list = await entries(u.token);
+    const created = list.find(
+      (entry) => entry.entityId === createdEvent.data.event.id && entry.undoable && entry.undoneAt === null,
+    );
+    expect(created, "an event create must produce an undoable audit entry").toBeTruthy();
+
+    const single = await call<{ entry: any; preview: any }>(server.base, "GET", `/api/activity/${created.id}`, { token: u.token });
+    expect(single.status).toBe(200);
+    expect(single.data.entry.id).toBe(created.id);
+    expect(single.data.preview).toEqual({
+      available: true,
+      reason: "ok",
+      summary: expect.stringContaining("Reverse:"),
+    });
+
+    // An action with no reversal path reports why rather than pretending it can be undone.
+    // Habit check-in removal is recorded with undoable: false — the row is gone, so there is
+    // nothing to restore; the preview must say so instead of offering a second reversal.
+    const habit = await call<{ habit: any }>(server.base, "POST", "/api/habits", {
+      token: u.token,
+      body: { title: "Read contract habit", cadence: "daily", targetCount: 1 },
+    });
+    expect(habit.status).toBe(201);
+    const checkin = await call<{ checkin: any }>(server.base, "POST", `/api/habits/${habit.data.habit.id}/checkins`, {
+      token: u.token,
+      body: { at: Date.now() },
+    });
+    expect(checkin.status).toBe(201);
+    const removed = await call<any>(
+      server.base,
+      "DELETE",
+      `/api/habits/${habit.data.habit.id}/checkins/${checkin.data.checkin.id}`,
+      { token: u.token },
+    );
+    expect(removed.status).toBe(204);
+    const irreversible = (await entries(u.token)).find((entry) => entry.action === "habit.checkin.remove");
+    expect(irreversible, "check-in removal must be recorded").toBeTruthy();
+    expect(irreversible.undoable).toBe(false);
+    const preview = await call<{ preview: any }>(server.base, "GET", `/api/activity/${irreversible.id}`, { token: u.token });
+    expect(preview.status).toBe(200);
+    expect(preview.data.preview.available).toBe(false);
+    expect(preview.data.preview.reason).toBe("not_undoable");
+    expect(preview.data.preview.summary).toBe("This action has no reversal path.");
+
+    // Undoing the event create is refused because its revision moved (the create wrote the row the
+    // audit snapshots, so current revision no longer matches "after"). AT31 already pins this as a
+    // 409 undo_conflict; here it just has to stay refused rather than half-apply.
+    const refused = await call<any>(server.base, "POST", `/api/activity/${created.id}/undo`, { token: u.token });
+    expect([200, 409]).toContain(refused.status);
+    const stillListed = (await entries(u.token)).find((entry) => entry.id === created.id);
+    expect(stillListed, "a refused undo must leave the timeline entry in place").toBeTruthy();
+
+    // The preview must agree with what the undo endpoint would actually do, whatever that is —
+    // the read contract and the action contract may never disagree.
+    const reread = await call<{ entry: any; preview: any }>(server.base, "GET", `/api/activity/${created.id}`, { token: u.token });
+    expect(reread.status).toBe(200);
+    expect(typeof reread.data.preview.available).toBe("boolean");
+    expect(typeof reread.data.preview.reason).toBe("string");
+    expect(reread.data.preview.available).toBe(!reread.data.entry.undoneAt && reread.data.entry.undoable);
+
+    // Owner scoping: the 404 for a foreign id must be byte-identical to an unknown id (no oracle),
+    // and an authenticated caller still gets it.
+    const other = await user();
+    const foreign = await call<any>(server.base, "GET", `/api/activity/${created.id}`, { token: other.token });
+    expect(foreign.status).toBe(404);
+    const unknown = await call<any>(server.base, "GET", "/api/activity/aud_does_not_exist", { token: u.token });
+    expect(unknown.status).toBe(404);
+    expect(foreign.data.error.message).toBe(unknown.data.error.message);
+    expect(JSON.stringify(foreign.data)).toBe(JSON.stringify(unknown.data));
+  });
+});

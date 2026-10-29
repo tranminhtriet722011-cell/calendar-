@@ -197,6 +197,43 @@ Manual checks MT-01…MT-06 were executed in a real Chromium session against the
 - **Undo of a manual work log deletes that logged row** (the log itself is the mistake being reversed); every other undo only releases, restores or flags (review REV-019; impl-spec R-8).
 - **Client-side event move/resize UI is not built**; the server enforces the same conflict validator on `PATCH /calendar/events/:id` (review REV-013/REV-014; impl-spec §1.1).
 
+## Requirement gap table — APE-BATCH-003 (Phase 4, 2026-10-29)
+
+Every one of the 55 acceptance criteria was classified against the current source. Statuses are
+`VERIFIED-EXECUTED` (an automated test or probe actually ran and passed in this task),
+`MANUAL-VERIFIED` (a documented browser check was observed), `CODE-ONLY` (the behaviour exists in
+the source but no automated test guards it), `UNTESTED` (spec-defined, bounded, not yet coded), and
+`MISSING` (spec-defined, no code, no test).
+
+### Summary
+
+| Status | Count | Meaning |
+|---|---|---|
+| `VERIFIED-EXECUTED` | 48 | Backed by a named Vitest test that ran in `npm run check` (exit 0, 128/128). |
+| `MANUAL-VERIFIED` | 7 | AT49–AT53 observed in the browser (MT-02…MT-06); AT55 from `npm run check` + review. |
+| `CODE-ONLY` | 3 | Closed in this task: now guarded by B3-07, B3-08, B3-09 (see table below). |
+| `UNTESTED` | 0 | None remaining. |
+| `MISSING` | 0 | No spec-defined requirement is uncoded. |
+| `NOT APPLICABLE (deferred)` | 5 | AT20, AT46, AT47, AT48, AT54 — scope decisions D-006, no code exists. |
+
+### Gaps found and closed in this task
+
+| Gap | Spec promise | Was | Now | Evidence |
+|---|---|---|---|---|
+| Single origin / no external dependency | Impl-spec 2: "No runtime network dependency: no CDN, no web fonts, no telemetry, no paid service, no external model." | `CODE-ONLY` — asserted only by a static probe, no test | Guarded | `api.test` **B3-07**: authored client/server sources scanned for external origins + provider SDK markers; built client `index.html` checked for external assets; built `dist/server.mjs` checked for outbound (client-side) calls, correctly tolerating the inbound `node:http` listener |
+| `GET /api/activity/:id` single-entry read | Impl-spec D8: audit timeline is queryable per entry with an undo preview | `CODE-ONLY` — every prior test reached an entry via `POST .../undo` or the list route | Guarded | `regression.test` **B3-08**: 200 with `entry`+`preview`; `preview.available` true/false; `reason` = `ok` / `not_undoable`; preview agrees with what `undo` would actually do; foreign-id 404 byte-identical to unknown-id 404 (no existence oracle) |
+| Persistence of effort logs and user settings | Impl-spec 2 (persistence) + E4 (effort) | `CODE-ONLY` — no stop/restart probe covered work sessions or settings, so a restart that lost them would still have reported "byte-identical" | Guarded | `persistence.mjs` **B3-09**: now snapshots `/api/auth/me` settings and every task's `/sessions`; **PERSISTENCE PASS 8/8** across a real stop/restart on `%TEMP%\ape-b309.db` (graceMinutes 25 and workingHours 09:15–17:45 survived byte-identical) |
+
+### Gaps deliberately left open (with reasons)
+
+| Gap | Why it is not a gap |
+|---|---|
+| Task creation writes no audit row | The spec scopes audit to *schedule* changes ("every schedule change is attributable"). Plain capture staying off the timeline is intended behaviour. |
+| No Settings screen | Impl-spec §11.1: settings are API-only in this increment. Out of scope by specification, not a defect. |
+| `event.create` undo answers 409 `undo_conflict` | The AT31 stale-edit rule working as designed: the create moved the row's revision, so blind restore is refused rather than half-applied. |
+| Overnight working windows (e.g. 22:00–08:00) refused with 400 | D-039: neither spec defines overnight semantics, and the previous behaviour silently dropped the window. Rejection is the honest interim until the PO defines wrap-around. |
+| `workingHours.days` silently filters invalid entries | Spec defines no valid values for the field; inventing a set would be an unrequested behaviour change (REV-FUP-08 disposition stands). |
+
 ## How to update
 
 1. A row's `Status` may only be changed from `NOT VERIFIED` (or `NOT APPLICABLE (deferred)`) by citing the exact command that was executed (a Vitest test name or a manual protocol ID) together with its actual output or observed result. `BLOCKED` requires recording the concrete environmental blocker.

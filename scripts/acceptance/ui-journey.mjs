@@ -4,8 +4,13 @@
 // database and a fresh throwaway user. This is deliberately NOT an HTTP journey: every flow
 // clicks, types and reads the DOM, so it exercises the same code paths a person would (React
 // state, controlled inputs, role="alert" surfacing, empty/loading/error states, the two-step
-// override confirm). The separate HTTP journeys and the Vitest suite cover the API contract;
-// this covers the interface.
+// override confirm, settings save/refuse/reload-persist). The separate HTTP journeys and the
+// Vitest suite cover the API contract; this covers the interface.
+//
+// Flows 1-18 (APE-BATCH-004 Phase 1): Today, Tasks, Goals, Calendar, Habits, Activity.
+// Flows 19-27 (APE-BATCH-004 Phase 2): the Settings screen — labelled controls, a valid save
+// that survives reload, five refused input classes surfaced as role="alert" naming the field,
+// proof that none of the refusals wrote anything, and the data-export control.
 //
 // Prereq: a built client + running server on a fresh temp DB.
 //   npm run build
@@ -629,6 +634,157 @@ try {
     await main.page.evaluate(`(() => { const b = Array.from(document.querySelectorAll('[role="alert"] button')).find(x => (x.textContent||'').includes('Retry')); if (b) { b.click(); return true; } return false; })()`);
     await main.page.waitFor(`!Array.from(document.querySelectorAll('[role="alert"]')).some(e => (e.textContent||'').includes('Could not load'))`, { label: "recovered after retry" });
     return "error+retry honest; single-origin confirmed";
+  });
+
+  // =====================================================================
+  // 19. Settings: real labels, the day fieldset, natural tab order, and
+  //     both required controls (save + data export) present.
+  // =====================================================================
+  const h1settings = await main.page.gotoHash("settings");
+  await step("19 settings screen renders labelled controls", async () => {
+    if (h1settings !== "Settings") throw new Error(`expected Settings view, got "${h1settings}"`);
+    const controlIds = [
+      "settings-timezone", "settings-wh-start", "settings-wh-end", "settings-grace",
+      "settings-rest-enabled", "settings-rest-start", "settings-rest-end",
+    ];
+    const problems = await main.page.evaluate(`(() => {
+      const out = [];
+      for (const id of ${JSON.stringify(controlIds)}) {
+        if (!document.getElementById(id)) { out.push(id + ": missing"); continue; }
+        if (!document.querySelector('label[for="' + id + '"]')) out.push(id + ": no <label for>");
+      }
+      const days = document.querySelectorAll('fieldset.settings-days input[type="checkbox"]');
+      if (days.length !== 7) out.push("working-day checkboxes: " + days.length + " (want 7)");
+      if (!document.querySelector('fieldset.settings-days legend')) out.push("day group has no <legend>");
+      if (!document.querySelector('.app-nav a[href="#settings"]')) out.push("no Settings nav entry");
+      const form = document.querySelector('form.settings-form');
+      if (!form) out.push("settings form missing");
+      else if (Array.from(form.querySelectorAll('[tabindex]')).some(el => Number(el.getAttribute('tabindex')) > 0)) out.push("positive tabindex breaks natural tab order");
+      const save = Array.from(document.querySelectorAll('button')).find(b => (b.textContent||'').includes('Save settings'));
+      if (!save || save.type !== 'submit') out.push("Save settings is not a native submit button");
+      if (!Array.from(document.querySelectorAll('button')).some(b => (b.textContent||'').includes('Download my data'))) out.push("Download my data control missing");
+      return out;
+    })()`);
+    if (problems.length) throw new Error(problems.join("; "));
+    return `${controlIds.length} labelled controls, 7-day fieldset, natural tab order, save + export`;
+  });
+
+  // =====================================================================
+  // 20. A valid save is written and survives a full page reload.
+  // =====================================================================
+  await step("20 valid settings save persists across a reload", async () => {
+    await act.field("settings-grace", "45");
+    await act.field("settings-wh-start", "07:30");
+    const submitted = await act.submitFormContaining("settings-grace");
+    if (!submitted) throw new Error("settings form not found for submit");
+    await main.page.waitFor(`document.body.innerText.includes('Settings saved')`, { label: "saved confirmation" });
+    const h1 = await main.page.gotoHash("settings");
+    if (h1 !== "Settings") throw new Error(`re-navigation landed on "${h1}"`);
+    const v = await main.page.evaluate(`(() => ({
+      grace: (document.getElementById('settings-grace')||{}).value || '',
+      start: (document.getElementById('settings-wh-start')||{}).value || ''
+    }))()`);
+    if (v.grace !== "45") throw new Error(`grace did not survive the reload (got "${v.grace}")`);
+    if (v.start !== "07:30") throw new Error(`working start did not survive the reload (got "${v.start}")`);
+    return "grace=45, start=07:30 read back after a full reload";
+  });
+
+  // =====================================================================
+  // 21. Empty clock value -> 400 -> role="alert" naming the field.
+  // =====================================================================
+  await step("21 empty clock value is refused naming the field", async () => {
+    await act.field("settings-wh-start", "");
+    if (!(await act.submitFormContaining("settings-wh-start"))) throw new Error("settings form not found");
+    const alert = await main.page.alertMatching('/settings\\.workingHours\\.start/', { label: "empty-clock alert" });
+    if (!/Working hours start/i.test(alert)) throw new Error(`alert does not name the control: ${alert}`);
+    const invalid = await main.page.evaluate(`(() => { const el = document.getElementById('settings-wh-start'); return !!(el && el.getAttribute('aria-invalid') === 'true'); })()`);
+    if (!invalid) throw new Error("refused input is not marked aria-invalid");
+    return `role=alert names the field: ${alert.slice(0, 80)}`;
+  });
+
+  // =====================================================================
+  // 22. Inverted working window -> 400 -> role="alert" naming the field.
+  // =====================================================================
+  await step("22 inverted working window is refused naming the field", async () => {
+    await act.field("settings-wh-start", "20:00");
+    await act.field("settings-wh-end", "09:00");
+    if (!(await act.submitFormContaining("settings-wh-end"))) throw new Error("settings form not found");
+    const alert = await main.page.alertMatching('/settings\\.workingHours\\.end/', { label: "inverted-window alert" });
+    if (!/Working hours end/i.test(alert)) throw new Error(`alert does not name the control: ${alert}`);
+    return `role=alert names the field: ${alert.slice(0, 80)}`;
+  });
+
+  // =====================================================================
+  // 23. Grace outside 0-120 -> 400 -> role="alert" naming the field.
+  // =====================================================================
+  await step("23 out-of-range grace is refused naming the field", async () => {
+    await act.field("settings-grace", "999");
+    if (!(await act.submitFormContaining("settings-grace"))) throw new Error("settings form not found");
+    const alert = await main.page.alertMatching('/settings\\.graceMinutes/', { label: "grace-range alert" });
+    if (!/Late-start grace/i.test(alert)) throw new Error(`alert does not name the control: ${alert}`);
+    return `role=alert names the field: ${alert.slice(0, 80)}`;
+  });
+
+  // =====================================================================
+  // 24. Clearing every working day -> 400 (form-level, no single field).
+  //     The server validates clocks, then grace, then the window inversion,
+  //     THEN the days list, so the earlier inputs are restored to valid
+  //     values first — otherwise the refusal names an older field and this
+  //     flow would assert against the wrong error.
+  // =====================================================================
+  await step("24 removing every working day is refused", async () => {
+    await act.field("settings-wh-start", "07:30");
+    await act.field("settings-wh-end", "22:00");
+    await act.field("settings-grace", "45");
+    for (let day = 0; day <= 6; day++) await act.check(`settings-day-${day}`, false);
+    if (!(await act.submitFormContaining("settings-timezone"))) throw new Error("settings form not found");
+    const alert = await main.page.alertMatching('/Select at least one working day/i', { label: "no-working-day alert" });
+    return alert.slice(0, 80);
+  });
+
+  // =====================================================================
+  // 25. Unknown time zone -> 400 (checked last by the server, so this also
+  //     proves a nearly-valid patch still writes nothing when it is refused).
+  // =====================================================================
+  await step("25 unknown time zone is refused", async () => {
+    await act.check("settings-day-1", true); // let the day check pass so validation reaches the zone
+    await act.field("settings-timezone", "Not/AZone");
+    if (!(await act.submitFormContaining("settings-timezone"))) throw new Error("settings form not found");
+    const alert = await main.page.alertMatching('/Unknown time zone/i', { label: "timezone alert" });
+    return alert.slice(0, 80);
+  });
+
+  // =====================================================================
+  // 26. Five refused classes left every stored value byte-identical, and the
+  //     form is not stuck: a valid save still succeeds afterwards.
+  // =====================================================================
+  await step("26 refusals wrote nothing and the form still saves", async () => {
+    const h1 = await main.page.gotoHash("settings");
+    if (h1 !== "Settings") throw new Error(`re-navigation landed on "${h1}"`);
+    const v = await main.page.evaluate(`(() => ({
+      tz: (document.getElementById('settings-timezone')||{}).value || '',
+      grace: (document.getElementById('settings-grace')||{}).value || '',
+      start: (document.getElementById('settings-wh-start')||{}).value || '',
+      end: (document.getElementById('settings-wh-end')||{}).value || '',
+      days: Array.from(document.querySelectorAll('fieldset.settings-days input[type="checkbox"]')).filter(c => c.checked).length
+    }))()`);
+    const want = { tz: "UTC", grace: "45", start: "07:30", end: "22:00", days: 7 };
+    for (const [key, expected] of Object.entries(want)) {
+      if (v[key] !== expected) throw new Error(`${key} mutated by a rejected save (want ${expected}, got ${v[key]})`);
+    }
+    await act.field("settings-grace", "30");
+    if (!(await act.submitFormContaining("settings-grace"))) throw new Error("settings form not found");
+    await main.page.waitFor(`document.body.innerText.includes('Settings saved')`, { label: "form recovers after refusals" });
+    return "5 refusals changed nothing stored; form recovers";
+  });
+
+  // =====================================================================
+  // 27. "Download my data" drives GET /api/export through the UI.
+  // =====================================================================
+  await step("27 download my data exports successfully", async () => {
+    if (!(await act.clickBtn("Download my data"))) throw new Error("Download my data button not found");
+    await main.page.waitFor(`document.body.innerText.includes('Your data has been downloaded')`, { label: "export confirmation" });
+    return "export fetched with the bearer token and handed to the browser";
   });
 
   await main.page.call("Page.close", { targetId: main.targetId }).catch(() => {});

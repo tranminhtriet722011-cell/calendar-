@@ -1383,3 +1383,71 @@ describe("APE-BATCH-003 — activity single-entry read contract (B3-08)", () => 
     expect(JSON.stringify(foreign.data)).toBe(JSON.stringify(unknown.data));
   });
 });
+
+/**
+ * APE-BATCH-004 (D-042) — the contract the new Settings screen drives (S-01, S-02).
+ *
+ * The screen is deliberately thin: it forwards the whole settings object in one PATCH and renders
+ * the server's 400 by field, so what it needs pinned here is (a) the refusal for an empty day
+ * list — which carries NO `details.field`, so the client can only surface it on its form-level
+ * role="alert" — and (b) the exact whole-object payload the screen sends, top-level `timezone`
+ * included, being written and read back as one unit.
+ *
+ * Everything else the screen can send (bad clocks, bad grace shapes and range, inverted windows,
+ * malformed sections, unknown zone) is already pinned by FUP-01…FUP-08 and B3-01…B3-05; these two
+ * tests are additive and cover only what none of them exercised.
+ */
+describe("APE-BATCH-004 — Settings screen contract (S-01, S-02)", () => {
+  async function settings(token: string) {
+    const response = await call<{ user: any }>(server.base, "GET", "/api/auth/me", { token });
+    return response.data.user.settings as {
+      workingHours: { start: string; end: string; days: number[] };
+      softRest: { enabled: boolean; start: string; end: string };
+      graceMinutes: number;
+    };
+  }
+
+  it("S-01: an empty or wholly out-of-range day list is 400 with no single field, and writes nothing", async () => {
+    const u = await user();
+    const before = await settings(u.token);
+    expect(before.workingHours.days.length).toBeGreaterThan(0);
+
+    // [] is empty outright; [7] / [-1, 8] are non-empty inputs the server filters down to nothing
+    // (days are weekday ints 0–6). All three must be refused the same way — an account can never
+    // end up with "no working days", which the scheduler would read as "never schedule".
+    for (const days of [[], [7], [-1, 8]]) {
+      const r = await call<any>(server.base, "PATCH", "/api/auth/settings", {
+        token: u.token,
+        body: { settings: { workingHours: { days } } },
+      });
+      expect(r.status, `days=${JSON.stringify(days)} must be 400`).toBe(400);
+      expect(r.data.error.message).toBe("Select at least one working day.");
+      // No details.field: the client must show this on the form-level alert, not on one control.
+      // Asserting the ABSENCE keeps that client contract honest instead of assuming it.
+      expect(r.data.error.details?.field).toBeUndefined();
+      expect(await settings(u.token)).toEqual(before);
+    }
+  });
+
+  it("S-02: the whole-object payload the Settings screen sends persists as one unit (save -> fresh read)", async () => {
+    const u = await user();
+    const payload = {
+      timezone: "America/New_York",
+      settings: {
+        workingHours: { start: "07:30", end: "18:45", days: [1, 2, 3, 4, 5] },
+        softRest: { enabled: false, start: "12:15", end: "13:45" },
+        graceMinutes: 45,
+      },
+    };
+    const saved = await call<{ user: any }>(server.base, "PATCH", "/api/auth/settings", { token: u.token, body: payload });
+    expect(saved.status).toBe(200);
+    // The 200 response echoes what was stored — the screen re-seeds its form from exactly this...
+    expect(saved.data.user.timezone).toBe(payload.timezone);
+    expect(saved.data.user.settings).toEqual(payload.settings);
+    // ...and a fresh read, which is what the screen does after a reload, returns the same unit.
+    const reread = await call<{ user: any }>(server.base, "GET", "/api/auth/me", { token: u.token });
+    expect(reread.data.user.timezone).toBe(payload.timezone);
+    expect(reread.data.user.settings).toEqual(payload.settings);
+    expect(await settings(u.token)).toEqual(payload.settings);
+  });
+});

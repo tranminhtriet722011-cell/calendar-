@@ -21,8 +21,9 @@ import TasksView from "./views/TasksView";
 import GoalsView from "./views/GoalsView";
 import HabitsView from "./views/HabitsView";
 import ActivityView from "./views/ActivityView";
+import SettingsView from "./views/SettingsView";
 
-type ViewId = "today" | "calendar" | "tasks" | "goals" | "habits" | "activity";
+type ViewId = "today" | "calendar" | "tasks" | "goals" | "habits" | "activity" | "settings";
 
 const VIEW_ORDER: { id: ViewId; label: string }[] = [
   { id: "today", label: "Today" },
@@ -31,6 +32,7 @@ const VIEW_ORDER: { id: ViewId; label: string }[] = [
   { id: "goals", label: "Goals" },
   { id: "habits", label: "Habits" },
   { id: "activity", label: "Activity" },
+  { id: "settings", label: "Settings" },
 ];
 
 function viewFromHash(): ViewId {
@@ -167,7 +169,11 @@ export default function App() {
             </nav>
 
             <main id="main" tabIndex={-1}>
-              <ViewRenderer view={view} />
+              <ViewRenderer
+                view={view}
+                user={session.user}
+                onUserUpdated={(updated) => setSession({ phase: "signedIn", user: updated })}
+              />
             </main>
 
             <footer className="app-footer">
@@ -191,7 +197,15 @@ export default function App() {
   );
 }
 
-function ViewRenderer({ view }: { view: ViewId }): ReactNode {
+function ViewRenderer({
+  view,
+  user,
+  onUserUpdated,
+}: {
+  view: ViewId;
+  user: User;
+  onUserUpdated: (updated: User) => void;
+}): ReactNode {
   switch (view) {
     case "today":
       return <TodayView />;
@@ -205,6 +219,8 @@ function ViewRenderer({ view }: { view: ViewId }): ReactNode {
       return <HabitsView />;
     case "activity":
       return <ActivityView />;
+    case "settings":
+      return <SettingsView user={user} onUserUpdated={onUserUpdated} />;
     default:
       return <TodayView />;
   }

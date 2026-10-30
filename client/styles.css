@@ -322,6 +322,32 @@ main:focus {
   font-weight: 400;
 }
 
+/* Working-days group on the Settings screen. Full-width so the 7 day checkboxes wrap onto
+   their own rows on narrow (320px) screens instead of squeezing the form grid. */
+.settings-days {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem 0.75rem;
+  margin: 0;
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.settings-days legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+
+.days-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+.days-row .field-checkbox {
+  flex-direction: row;
+}
+
 .field-hint {
   color: var(--muted);
   font-size: 0.88rem;

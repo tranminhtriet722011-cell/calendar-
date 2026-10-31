@@ -5,6 +5,11 @@
  * silently. A hard conflict (fixed/locked event) requires an explicit override plus a separate
  * confirmation; protected rest can never be overridden. The UI mirrors that with a warning panel
  * and a deliberate two-step confirm flow.
+ *
+ * Both events and blocks are movable/resizable from labelled start/end date-time fields rather
+ * than drag-only handles, so the same edit is reachable by keyboard and by switch control. Every
+ * event move also sends the revision that was loaded, so a concurrent edit elsewhere is refused
+ * with a refresh message instead of silently overwriting it.
  */
 
 import { useMemo, useState } from "react";
@@ -85,6 +90,14 @@ export default function CalendarView() {
   const [editForm, setEditForm] = useState({ start: "", end: "", adjustEstimate: false });
   const [editError, setEditError] = useState<string | null>(null);
   const [pendingEditOverride, setPendingEditOverride] = useState<PendingOverride | null>(null);
+
+  // Moving/resizing an EVENT uses the same conflict policy as a block, minus the estimate (events
+  // are not task time) and plus the locked-event two-step: a locked overlap is the hard obstacle
+  // the scheduler never overrides, so it needs the same explicit acknowledge + confirm pair.
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [eventEditForm, setEventEditForm] = useState({ start: "", end: "" });
+  const [eventEditError, setEventEditError] = useState<string | null>(null);
+  const [pendingEventOverride, setPendingEventOverride] = useState<PendingOverride | null>(null);
 
   const [dialog, setDialog] = useState<
     | { kind: "deleteEvent"; event: CalendarEvent }
@@ -243,6 +256,70 @@ export default function CalendarView() {
     }
   }
 
+  function openEventEdit(item: CalendarEvent): void {
+    setEditingEventId(item.id);
+    setEventEditForm({ start: toDateTimeLocal(item.startAt), end: toDateTimeLocal(item.endAt) });
+    setEventEditError(null);
+    setPendingEventOverride(null);
+  }
+
+  /**
+   * Move/resize an event through `PATCH /api/calendar/events/:id`.
+   *
+   * Same policy as a block move (AT09/AT10, H3/H5): conflicts are returned and never applied
+   * silently; a locked overlap stops the save and demands an explicit acknowledgement plus a
+   * second, separate confirmation; protected rest (H5) is refused outright with no override.
+   * The loaded `revision` is always sent, so a concurrent edit elsewhere is refused with a
+   * refresh message instead of silently overwriting — the guard TasksView already has.
+   */
+  async function submitEventEdit(item: CalendarEvent, override: boolean): Promise<void> {
+    const startAt = fromDateTimeLocal(eventEditForm.start);
+    const endAt = fromDateTimeLocal(eventEditForm.end);
+    if (startAt === null || endAt === null || endAt <= startAt) {
+      setEventEditError("The event must end after it starts.");
+      return;
+    }
+    setEventEditError(null);
+    setPendingEventOverride(null);
+    try {
+      const body: Record<string, unknown> = { startAt, endAt, revision: item.revision };
+      if (override) {
+        // The checkbox the user ticked is the explicit confirmation the server demands on every
+        // override path (AT10) — the flag alone is never enough.
+        body.override = true;
+        body.confirm = true;
+      }
+      const result = await apiPatch<{ event: CalendarEvent; conflicts: OverlapFinding[] }>(
+        `/api/calendar/events/${encodeURIComponent(item.id)}`,
+        body,
+      );
+      announce(
+        result.conflicts.length > 0
+          ? `Event “${result.event.title}” moved onto overlapping items. The exception was recorded in Activity.`
+          : `Event “${result.event.title}” moved.`,
+        result.conflicts.length > 0 ? "info" : "success",
+      );
+      setEditingEventId(null);
+      state.reload();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const details = (error.details ?? null) as { conflicts?: OverlapFinding[]; canOverride?: boolean } | null;
+        if (details?.canOverride && !override) {
+          setPendingEventOverride({ message: error.message, conflicts: details.conflicts ?? [], acknowledged: false });
+          announce(error.message, "error");
+          return;
+        }
+        // Protected rest (H5) and a stale revision both land here — no override is offered,
+        // because neither is a choice the user can make.
+        setEventEditError(errorMessage(error));
+        announce(errorMessage(error), "error");
+        return;
+      }
+      setEventEditError(errorMessage(error));
+      announce(errorMessage(error), "error");
+    }
+  }
+
   async function confirmDialogAction(): Promise<void> {
     if (!dialog) return;
     setDialogBusy(true);
@@ -367,6 +444,9 @@ export default function CalendarView() {
                         </p>
                       </div>
                       <div className="btn-row">
+                        <button type="button" className="btn" onClick={() => openEventEdit(item)}>
+                          Move / resize
+                        </button>
                         <button type="button" className="btn" onClick={() => void toggleEventLock(item)}>
                           {item.locked ? "Unlock" : "Lock"}
                         </button>
@@ -381,6 +461,89 @@ export default function CalendarView() {
                           Delete
                         </button>
                       </div>
+                      {editingEventId === item.id ? (
+                        <form
+                          className="form-grid item-form"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void submitEventEdit(item, false);
+                          }}
+                          noValidate
+                        >
+                          <h3>Move or resize this event</h3>
+                          <DateTimeField
+                            id={`event-edit-start-${item.id}`}
+                            label="New start"
+                            value={eventEditForm.start}
+                            onValueChange={(value) => setEventEditForm((form) => ({ ...form, start: value }))}
+                          />
+                          <DateTimeField
+                            id={`event-edit-end-${item.id}`}
+                            label="New end"
+                            value={eventEditForm.end}
+                            onValueChange={(value) => setEventEditForm((form) => ({ ...form, end: value }))}
+                          />
+                          {pendingEventOverride ? (
+                            <div className="error-panel" role="alert">
+                              <p>
+                                <strong>Scheduling conflict.</strong> {pendingEventOverride.message}
+                              </p>
+                              <p className="flag flag-warn">
+                                <span aria-hidden="true">⚠ </span>Warning: moving this event on top of a locked event
+                                double-books that time. The exception is recorded in your activity log.
+                              </p>
+                              <ul>
+                                {pendingEventOverride.conflicts.map((conflict) => (
+                                  <li key={conflict.id}>
+                                    {conflictLabel(conflict)} “{conflict.label}” — {formatDateTime(conflict.start)} –{" "}
+                                    {formatDateTime(conflict.end)}
+                                  </li>
+                                ))}
+                              </ul>
+                              <CheckboxField
+                                id={`event-edit-override-ack-${item.id}`}
+                                label="I understand this overlaps a locked event and I want to move the event anyway"
+                                checked={pendingEventOverride.acknowledged}
+                                onCheckedChange={(checked) =>
+                                  setPendingEventOverride((current) =>
+                                    current ? { ...current, acknowledged: checked } : current,
+                                  )
+                                }
+                              />
+                              <div className="btn-row">
+                                <button
+                                  type="button"
+                                  className="btn btn-danger"
+                                  disabled={!pendingEventOverride.acknowledged}
+                                  onClick={() => void submitEventEdit(item, true)}
+                                >
+                                  Move anyway (override)
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  onClick={() => setPendingEventOverride(null)}
+                                >
+                                  Keep my event where it is
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                          {eventEditError ? (
+                            <p className="field-error" role="alert">
+                              <span aria-hidden="true">⚠ </span>Error: {eventEditError}
+                            </p>
+                          ) : null}
+                          <div className="btn-row">
+                            <button type="submit" className="btn btn-primary">
+                              Save move
+                            </button>
+                            <button type="button" className="btn" onClick={() => setEditingEventId(null)}>
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

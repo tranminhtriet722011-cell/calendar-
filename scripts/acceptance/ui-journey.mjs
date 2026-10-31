@@ -11,6 +11,9 @@
 // Flows 19-27 (APE-BATCH-004 Phase 2): the Settings screen — labelled controls, a valid save
 // that survives reload, five refused input classes surfaced as role="alert" naming the field,
 // proof that none of the refusals wrote anything, and the data-export control.
+// Flows 28-30 (APE-BATCH-004 Phase 3): event move/resize through labelled start/end fields —
+// the plain save, the locked-event two-step override with its audit entry, and protected rest
+// being refused outright with no override offered.
 //
 // Prereq: a built client + running server on a fresh temp DB.
 //   npm run build
@@ -230,6 +233,37 @@ function dtl(offsetMinutes) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 }
+
+// Same, but anchored to a CALENDAR DAY (day offset from today) at a fixed wall-clock hour. The
+// Calendar only shows the Monday-start week containing today, so an event placed with "now + N
+// hours" can drift across that boundary when a run happens late on a Sunday; a fixed hour on
+// today's date always renders.
+function dtlOn(dayOffset, hour, minute) {
+  const d = new Date(Date.now() + dayOffset * 86400000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(hour)}:${p(minute)}`;
+}
+
+// Scoped DOM helpers: find the list item whose text contains `title` (events and blocks share the
+// li.item class, so an unscoped first-match click would target whichever list renders first).
+const liReadyFor = (title) =>
+  `Array.from(document.querySelectorAll('li.item')).some(x => (x.textContent||'').includes(${JSON.stringify(title)}))`;
+
+const liTextFor = (title) =>
+  `(() => { const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes(${JSON.stringify(title)})); return li ? li.innerText : ''; })()`;
+
+// The times paragraph of one list item — the durable display of the stored start/end. Unlike the
+// whole li text, it is not polluted by an open inline edit form (which lives INSIDE the li), so it
+// is the right thing to compare when asserting that a refused edit changed nothing.
+const liMutedFor = (title) =>
+  `(() => { const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes(${JSON.stringify(title)})); const p = li && li.querySelector('p.muted'); return p ? p.innerText : ''; })()`;
+
+const clickInLi = (title, label) =>
+  `(() => { const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes(${JSON.stringify(title)})); const b = li && Array.from(li.querySelectorAll('button')).find(x => (x.textContent||'').trim() === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`;
+
+// The two date-time inputs of whichever event edit form is open (their ids embed the event id).
+const openEventEditIds =
+  `(() => { const form = Array.from(document.querySelectorAll('form.item-form')).find(f => (f.textContent||'').includes('Move or resize this event')); if (!form) return null; const ids = Array.from(form.querySelectorAll('input[type="datetime-local"]')).map(i => i.id); return ids.length === 2 ? ids : null; })()`;
 
 try {
   // =====================================================================
@@ -550,27 +584,34 @@ try {
   const h1cal = await main.page.gotoHash("calendar");
   await step("16 locked-event overlap needs a two-step override", async () => {
     if (h1cal !== "Calendar") throw new Error(`expected Calendar view, got "${h1cal}"`);
-    // Create a fixed event ~2 days out, then lock it.
-    const evStart = dtl(2 * 1440 + 120);
-    const evEnd = dtl(2 * 1440 + 180);
+    // Place the event TODAY: the Calendar defaults to the Monday-start week containing today, so
+    // "now + 2 days" lands on Monday (next week) when a run happens on Saturday and the event
+    // never renders. Today is the only day offset guaranteed inside the visible week. 08:00 is
+    // free of every event the later flows create (10:00 onward).
+    const evStart = dtlOn(0, 8, 0);
+    const evEnd = dtlOn(0, 8, 30);
     await act.field("event-title", "Locked planning offsite");
     await act.field("event-start", evStart);
     await act.field("event-end", evEnd);
     await act.clickBtn("Create event");
-    await main.page.waitFor(`document.body.innerText.includes('Locked planning offsite')`, { label: "event created" });
-    // Lock it (per-event Lock button in the Events list).
+    await main.page.waitFor(liReadyFor("Locked planning offsite"), { label: "event created" });
+    // Events are created LOCKED by default (store.ts createEvent: `input.locked === false ? 0 : 1`),
+    // so the per-event button usually reads "Unlock" already. Click "Lock" only if the event
+    // somehow renders unlocked, then require the "Unlock" button either way — that label flip is
+    // the durable proof of the locked state (waiting for the word "Locked" would also match this
+    // event's own title, which is true before it has been locked at all).
     await main.page.evaluate(`(() => {
       const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes('Locked planning offsite'));
       const b = li && Array.from(li.querySelectorAll('button')).find(x => (x.textContent||'').trim() === 'Lock');
       if (b) b.click();
-      return !!b;
+      return !!li;
     })()`);
-    await main.page.waitFor(`document.body.innerText.includes('Locked')`, { label: "event locked" });
+    await main.page.waitFor(`(() => { const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes('Locked planning offsite')); return !!li && Array.from(li.querySelectorAll('button')).some(b => (b.textContent||'').trim() === 'Unlock'); })()`, { label: "event locked (control shows Unlock)" });
 
     // Place a block over the locked event.
     await main.page.evaluate(`(() => { const s = document.getElementById('block-task'); if (!s) return false; const opt = Array.from(s.options).find(o => (o.textContent||'').includes('Buy groceries')); if (!opt) return false; __ui.setVal(s, opt.value); return true; })()`);
     await act.field("block-start", evStart);
-    await act.field("block-end", dtl(2 * 1440 + 150));
+    await act.field("block-end", dtlOn(0, 8, 30));
     await act.clickBtn("Place block");
     // Expect the two-step override panel (role=alert) naming the locked conflict.
     await main.page.waitFor(`Array.from(document.querySelectorAll('[role="alert"]')).some(e => (e.textContent||'').includes('Scheduling conflict'))`, { label: "conflict panel" });
@@ -785,6 +826,125 @@ try {
     if (!(await act.clickBtn("Download my data"))) throw new Error("Download my data button not found");
     await main.page.waitFor(`document.body.innerText.includes('Your data has been downloaded')`, { label: "export confirmation" });
     return "export fetched with the bearer token and handed to the browser";
+  });
+
+  // Durable proof that a move was applied: the edit form closed AND the item's own text changed.
+  // A transient announce toast would not survive the reload that follows the save.
+  const movedPredicate = (title, before) =>
+    `(() => { const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes(${JSON.stringify(title)})); const t = li ? li.innerText : ''; const open = Array.from(document.querySelectorAll('form.item-form')).some(f => (f.textContent||'').includes('Move or resize this event')); return !!t && !open && t !== ${JSON.stringify(before)}; })()`;
+
+  // Create an event and wait for its LIST ITEM. The announce toast carries the title immediately
+  // while state.reload() is still in flight, so matching document.body.innerText races the render
+  // and the next click can run against a list that does not contain the event yet.
+  const createEvent = async (title, kind, start, end) => {
+    await act.field("event-title", title);
+    await act.field("event-kind", kind);
+    await act.field("event-start", start);
+    await act.field("event-end", end);
+    await act.clickBtn("Create event");
+    await main.page.waitFor(liReadyFor(title), { label: `events list shows ${title}` });
+  };
+
+  // =====================================================================
+  // 28. Event move/resize: labelled start/end fields (no drag-only control),
+  //     saved through PATCH /api/calendar/events/:id and read back.
+  // =====================================================================
+  const h1calMove = await main.page.gotoHash("calendar");
+  await step("28 event move/resize saves and persists", async () => {
+    if (h1calMove !== "Calendar") throw new Error(`expected Calendar view, got "${h1calMove}"`);
+    await createEvent("Sprint review", "fixed", dtlOn(0, 10, 0), dtlOn(0, 11, 0));
+
+    const before = await main.page.evaluate(liTextFor("Sprint review"));
+    if (!(await main.page.evaluate(clickInLi("Sprint review", "Move / resize")))) throw new Error("Move / resize control not found");
+    const editIds = await main.page.evaluate(openEventEditIds);
+    if (!editIds) throw new Error("event edit form with two date-time inputs not found");
+    await act.field(editIds[0], dtlOn(0, 16, 30));
+    await act.field(editIds[1], dtlOn(0, 17, 30));
+    if (!(await act.clickBtn("Save move"))) throw new Error("Save move button not found");
+    await main.page.waitFor(movedPredicate("Sprint review", before), { label: "event times updated and edit form closed" });
+    return "10:00-11:00 -> 16:30-17:30 through labelled fields";
+  });
+
+  // =====================================================================
+  // 29. Moving an event onto a LOCKED event: 409 -> warning panel -> ack
+  //     still disabled -> override -> audited as schedule.exception.
+  // =====================================================================
+  await step("29 locked event needs the two-step override and is audited", async () => {
+    await createEvent("Locked planning session", "fixed", dtlOn(0, 12, 0), dtlOn(0, 13, 0));
+    // Events default to LOCKED (store.ts createEvent: `input.locked === false ? 0 : 1`), so the
+    // list already shows "Unlock". Click "Lock" only if it renders unlocked, then require the
+    // "Unlock" button either way — that label is the durable proof, not the word "Locked" (this
+    // event's own title contains it).
+    await main.page.evaluate(`(() => {
+      const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes('Locked planning session'));
+      const b = li && Array.from(li.querySelectorAll('button')).find(x => (x.textContent||'').trim() === 'Lock');
+      if (b) b.click();
+      return !!li;
+    })()`);
+    await main.page.waitFor(`(() => { const li = Array.from(document.querySelectorAll('li.item')).find(x => (x.textContent||'').includes('Locked planning session')); return !!li && Array.from(li.querySelectorAll('button')).some(b => (b.textContent||'').trim() === 'Unlock'); })()`, { label: "event locked (control shows Unlock)" });
+
+    await createEvent("Movable planning session", "fixed", dtlOn(0, 15, 0), dtlOn(0, 16, 0));
+
+    const before = await main.page.evaluate(liTextFor("Movable planning session"));
+    if (!(await main.page.evaluate(clickInLi("Movable planning session", "Move / resize")))) throw new Error("Move / resize control not found");
+    const editIds = await main.page.evaluate(openEventEditIds);
+    if (!editIds) throw new Error("event edit form not found");
+    const eventId = editIds[0].slice("event-edit-start-".length);
+    await act.field(editIds[0], dtlOn(0, 12, 15));
+    await act.field(editIds[1], dtlOn(0, 12, 45));
+    if (!(await act.clickBtn("Save move"))) throw new Error("Save move button not found");
+
+    await main.page.waitFor(`Array.from(document.querySelectorAll('[role="alert"]')).some(e => (e.textContent||'').includes('Scheduling conflict'))`, { label: "event conflict panel" });
+    const alertText = (await act.alerts()).join(" ");
+    if (!/locked/i.test(alertText)) throw new Error(`conflict does not name the locked event: ${alertText.slice(0, 200)}`);
+    const disabledBefore = await main.page.evaluate(`(() => { const b = Array.from(document.querySelectorAll('button')).find(x => (x.textContent||'').includes('Move anyway (override)')); return b ? b.disabled : null; })()`);
+    if (disabledBefore !== true) throw new Error("event override button not disabled before acknowledgement");
+
+    await act.check(`event-edit-override-ack-${eventId}`, true);
+    if (!(await act.clickBtn("Move anyway (override)"))) throw new Error("override button not found");
+    await main.page.waitFor(movedPredicate("Movable planning session", before), { label: "override applied" });
+
+    // The exception must be attributable: a schedule.exception entry for THIS event id.
+    await main.page.gotoHash("activity");
+    await main.page.waitFor(
+      `Array.from(document.querySelectorAll('li.timeline-item')).some(li => { const t = li.textContent||''; return t.includes('schedule exception') && t.includes(${JSON.stringify(eventId)}); })`,
+      { label: "schedule.exception audit entry for the overridden move" },
+    );
+    return "409 -> ack (disabled until ticked) -> override -> audited";
+  });
+
+  // =====================================================================
+  // 30. Protected rest (H5) is a HARD stop: no override may be offered and
+  //     the move must not be applied.
+  // =====================================================================
+  const h1calRest = await main.page.gotoHash("calendar");
+  await step("30 protected rest refuses the move and offers no override", async () => {
+    if (h1calRest !== "Calendar") throw new Error(`expected Calendar view, got "${h1calRest}"`);
+    await createEvent("Protected focus window", "rest_protected", dtlOn(0, 19, 0), dtlOn(0, 20, 0));
+
+    await createEvent("Late review", "fixed", dtlOn(0, 21, 0), dtlOn(0, 22, 0));
+
+    const before = await main.page.evaluate(liMutedFor("Late review"));
+    if (!before) throw new Error("could not read the event's stored times before the move");
+    if (!(await main.page.evaluate(clickInLi("Late review", "Move / resize")))) throw new Error("Move / resize control not found");
+    const editIds = await main.page.evaluate(openEventEditIds);
+    if (!editIds) throw new Error("event edit form not found");
+    await act.field(editIds[0], dtlOn(0, 19, 15));
+    await act.field(editIds[1], dtlOn(0, 19, 45));
+    if (!(await act.clickBtn("Save move"))) throw new Error("Save move button not found");
+
+    const refusal = await main.page.alertMatching('/protected rest/i', { label: "protected-rest refusal" });
+    const offersOverride = await main.page.evaluate(`Array.from(document.querySelectorAll('button')).some(b => (b.textContent||'').includes('Move anyway (override)'))`);
+    if (offersOverride) throw new Error("protected rest must never offer an override");
+    // Durable proof: re-read the STORED times after a full reload. Comparing the whole li text
+    // would be wrong — on a 409 the inline error keeps the edit form open INSIDE the li, so its
+    // text always differs from the pre-edit capture even when nothing was saved. The times
+    // paragraph is re-read from a reloaded page, i.e. from what the server actually holds.
+    await main.page.gotoHash("calendar");
+    await main.page.waitFor(liReadyFor("Late review"), { label: "calendar reloaded" });
+    const after = await main.page.evaluate(liMutedFor("Late review"));
+    if (after !== before) throw new Error(`the move was applied over protected rest despite the refusal (was "${before}", now "${after}")`);
+    return refusal.slice(0, 80);
   });
 
   await main.page.call("Page.close", { targetId: main.targetId }).catch(() => {});

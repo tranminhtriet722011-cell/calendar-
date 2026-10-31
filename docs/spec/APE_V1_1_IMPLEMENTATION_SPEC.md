@@ -14,7 +14,7 @@
 
 | Capability | Notes |
 |---|---|
-| Local account registration, login, logout, settings (API-only in this increment — no settings screen; see §11.1) | username + password only; no email, no OAuth |
+| Local account registration, login, logout, settings screen (D-042) + `PATCH /api/auth/settings` | username + password only; no email, no OAuth |
 | Tasks: capture, estimate, due date, priority, parent/subtask, goal link, status transitions, ordering | quick add with a title alone leaves the task in Inbox |
 | Calendar: fixed/rest events, manual work blocks, move/resize/lock/delete, free-time computation | conflicts are reported, never silently overwritten. The client edits/moves/resizes **work blocks**; events are locked/unlocked and deleted from the UI, and event move/resize is enforced server-side through the same conflict validator (`PATCH /calendar/events/:id`, review REV-013) but has no dedicated client control yet |
 | Goals: count and milestone metrics, explicit progress logging, milestones, breakdown drafts → commit | progress never moves as a side effect |
@@ -305,12 +305,12 @@ evidence) lives in `docs/spec/APE_V1_1_TRACEABILITY.md`. Acceptance groups:
   what was removed, but the measured-effort row itself is gone.
 - **No goal/habit deletion** (R-9 above). Archive-only for tasks; goals and habits stay until a
   future increment adds removal.
-- **Settings are API-only.** Working hours, grace period, soft-rest allowance and time zone are
-  changed via `PATCH /api/auth/settings`; the client has no settings screen in this increment.
-  Working hours therefore keep their registration default (08:00–22:00, all days) unless the API is
-  used directly.
-- **No event-override control in the client.** The server gate for creating/moving an event over a
-  locked/fixed item requires `override` + `confirm` (AT10, REV-A-01); the client's block form
-  collects that confirmation, but its event form does not, so an overlapping event creation from the
-  UI surfaces the server's honest `409` instead. Overlapping *unlocked* events and soft rest remain
-  clickable without friction.
+- **Settings edits have no stale-edit guard.** The Settings screen (D-042) sends the whole settings
+  object in one `PATCH /api/auth/settings`; settings carry no revision field and the route does no
+  concurrency check, so two simultaneous edits resolve last-write-wins instead of a `409`. Every
+  invalid value is still refused atomically (nothing partial is ever written).
+- **No override control on event *creation*.** The server gate for creating/moving an event over a
+  locked/fixed item requires `override` + `confirm` (AT10, REV-A-01); the block form and the event
+  move/resize form both collect that two-step confirmation, but the event *creation* form does not,
+  so an overlapping event creation from the UI surfaces the server's honest `409` instead.
+  Overlapping *unlocked* events and soft rest remain clickable without friction.

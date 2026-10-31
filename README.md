@@ -73,6 +73,7 @@ real credentials — this application has no credential configuration by design.
 | **Execute** | Manual blocks, timer/manual effort logs, late-start / overdue / overtime / at-risk flags, early completion that releases only the task's own future sessions (`AT21`–`AT23`, `AT25`). |
 | **Recover** | "Need more time" re-plans around fixed events and existing sessions, showing what would move before the user approves (`AT24`). Undo restores a committed change when the schedule is still compatible, and refuses with a conflict preview when it is not (`AT30`, `AT31`). |
 | **Goals & habits** | Goal progress comes from explicit outcome units, never from task completion (`AT06`); habit period attainment with pause windows and duplicate-check-in protection (`AT32`–`AT35`). |
+| **Settings** | A labelled, keyboard-reachable Settings screen (D-042) edits exactly what the API stores: time zone, working hours (start/end/days), protected soft rest and the scheduling grace window. The screen sends the whole object in one `PATCH`; a `400` lands on the offending control via `role="alert"` naming the field, and a refused save writes nothing. "Download my data" drives `GET /api/export` with the bearer token in a header. |
 | **Safety** | Owner-scoped authorization (foreign entity ids → `404`; foreign reference fields → identical `400`s, never an existence oracle), locked/fixed events are never auto-moved, protected rest is never scheduled over, manual overrides need explicit confirmation and are audited (`AT09`–`AT13`, `AT42`). |
 | **Data rights** | `GET /api/export` returns the owner's data with no credential material (`AT44`). |
 
@@ -111,9 +112,10 @@ The repository ships a project-local OpenCode setup:
 
 - **Agents:** `.opencode/agents/ape-builder.md` (default agent) and `.opencode/agents/ape-reviewer.md`
   (read-only reviewer).
-- **Commands:** `/bootstrap`, `/plan-task`, `/implement`, `/verify`, `/review`, `/release-check`, `/audit`.
+- **Commands:** `/bootstrap`, `/plan-task`, `/implement`, `/verify`, `/review`, `/audit`,
+  `/release-check`, `/acceptance`, `/handoff`.
 - **Skills:** discovery, spec-architecture, fullstack-implementation, test-repair, independent-review,
-  security-privacy, ui-ux-accessibility, release-readiness.
+  security-privacy, ui-ux-accessibility, release-readiness, acceptance-verification, final-report.
 - **Permissions** (`opencode.json`): routine work is allowed; `git push`, publishing, paid/deploy
   providers and credential-file access are denied; destructive git/shell operations and outbound
   requests ask first. Rule order matters — later rules win.
@@ -145,9 +147,10 @@ Deliberate, disclosed trade-offs of this increment (fuller detail in
 - Undoing a manual work log deletes that logged entry itself (the log *is* the mistake being
   reversed); every other undo only releases, restores or flags.
 - Goals and habits cannot be deleted yet; tasks archive (with cascade + undo) instead.
-- Working hours, grace, soft rest and time zone are set through `PATCH /api/auth/settings` — the
-  client has no settings screen yet, so the registration default (08:00–22:00, all days) applies
-  unless changed via the API.
+- Working hours, grace, soft rest and time zone are edited on the client's Settings screen
+  (`PATCH /api/auth/settings`, D-042); settings carry no revision field, so two simultaneous
+  edits are last-write-wins rather than a stale-edit conflict (disclosed, not invented).
 - Creating or moving an event over a locked/fixed item requires the server's `override` + `confirm`
-  gate; the client's event form has no override control yet, so such attempts surface the honest
-  `409` from the API.
+  gate. Moving/resizing an existing event implements the full two-step confirm in the UI; the
+  event **creation** form still has no override control, so creating an overlapping event from the
+  UI surfaces the honest `409` from the API.

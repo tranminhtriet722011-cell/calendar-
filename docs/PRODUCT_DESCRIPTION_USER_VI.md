@@ -38,8 +38,12 @@ developer). Chi tiết bằng chứng nằm ở mục 5.
 - Đăng ký bằng **tên người dùng + mật khẩu** (không dùng email, không OAuth). Mật khẩu phải đủ mạnh.
 - Đăng nhập, đăng xuất; mã thông báo phiên (bearer token) được lưu trong `localStorage` của trình duyệt.
 - Một lỗi `401` từ API sẽ đưa ứng dụng quay lại màn hình đăng nhập.
-- **Không có màn hình "Cài đặt" (Settings) trong giao diện** — cài đặt chỉ thao tác qua API
-  (xem mục 4 "Chưa có sẵn", theo đặc tả triển khai §11.1).
+- **Màn hình "Cài đặt" (Settings)** đã có trong giao diện (quyết định **D-042**): múi giờ, giờ làm
+  việc (bắt đầu / kết thúc / các ngày trong tuần), giờ nghỉ được bảo vệ, vùng ân hạn `graceMinutes`,
+  và nút "Tải dữ liệu của tôi" (`GET /api/export`). Mọi giá trị không hợp lệ bị **từ chối với 400**
+  và hiển thị `role="alert"` nêu rõ tên trường; một lần lưu bị từ chối **không ghi gì cả**.
+  Lưu ý trung thực: cài đặt **không có trường revision**, nên hai lần sửa đồng thời được giải quyết
+  theo kiểu "lưu sau ghi đè lưu trước" (không có cảnh báo xung đột cũ–mới).
 
 ### 2.2 Nhiệm vụ (Tasks)
 - Thêm nhanh chỉ với tiêu đề: nhiệm vụ rơi vào **Hộp thư đến (Inbox)** và **không** được tự động
@@ -54,9 +58,11 @@ developer). Chi tiết bằng chứng nằm ở mục 5.
 - Sự kiện cố định (fixed), ngày nghỉ (rest), và **khung giờ làm việc tự đặt** (work block).
 - Xung đột lịch được **báo cáo**, không bao giờ bị ghi đè trong im lặng.
 - Tính thời gian trống (free time) dựa trên cửa sổ làm việc và các sự kiện đã khóa.
-- Khóa/mở khóa/xóa sự kiện từ giao diện. Việc **di chuyển / thay đổi kích thước** được máy chủ
-  kiểm tra bằng cùng bộ validator xung đột khi gọi API tương ứng — nhưng giao diện kéo-thả cho
-  thao tác đó **chưa được dựng** (xem mục 4).
+- Khóa/mở khóa/xóa sự kiện từ giao diện. Việc **di chuyển / thay đổi kích thước** (sự kiện và khối)
+  có nút bấm trong giao diện dưới dạng các trường giờ có nhãn (nhập bằng bàn phím được, không phải
+  chỉ kéo-thả); lệnh đi qua đúng bộ validator xung đột của máy chủ — đè lên sự kiện đã khóa cần
+  **xác nhận hai bước**, đè lên giờ nghỉ được bảo vệ thì **bị từ chối**, và mọi ngoại lệ đều được
+  ghi vào Nhật ký hoạt động.
 
 ### 2.4 Mục tiêu (Goals)
 - Theo chỉ số **số lượng (count)** hoặc **cột mốc (milestone)**.
@@ -121,12 +127,11 @@ và bây giờ đã ở trạng thái **đã xác minh (VERIFIED)**.
 Những điều dưới đây **không tồn tại** trong phiên bản này. Đây là giới hạn có chủ đích, được ghi
 trong đặc tả triển khai §1.2 (D-006) và các mục tương ứng:
 
-- **Không có màn hình "Cài đặt" (Settings screen)** trong giao diện. Cài đặt (giờ làm việc, giờ nghỉ,
-  vùng ân hạn `graceMinutes`, múi giờ) chỉ thao tác qua **API**. *(Đặc tả §11.1.)*
 - **Không có đồng bộ lịch bên ngoài** (Google / Apple / CalDAV).
-- **Chưa có giao diện kéo-thả để di chuyển hoặc thay đổi kích thước khối/sự kiện.** Máy chủ vẫn
-  kiểm tra xung đột (và từ chối với 409) khi gọi API tương ứng, nhưng thao tác này chưa có nút bấm
-  trong giao diện. Khóa/mở khóa/xóa sự kiện thì có.
+- **Chưa có giao diện kéo-thả (drag-and-drop) bằng chuột** để di chuyển hoặc thay đổi kích thước
+  khối/sự kiện. Thay vào đó, thao tác này được dựng bằng **các trường giờ có nhãn** trong biểu mẫu
+  (với xác nhận hai bước cho xung đột đã khóa) — dễ tiếp cận hơn với bàn phím và điều khiển bằng
+  công tắc. Phím tắt kéo-thả có thể là một cải tiến sau.
 - **Không có hàng đợi ngoại tuyến (offline queue)** và **không có đồng bộ đa thiết bị** — ứng dụng
   hiển thị lỗi rõ ràng khi mất mạng, nhưng **không xếp hàng các thay đổi để đồng bộ sau**.
 - **Không có ứng dụng Android gốc** — chỉ có giao diện web.
@@ -147,12 +152,15 @@ trong đặc tả triển khai §1.2 (D-006) và các mục tương ứng:
   được ánh xạ tới một bài kiểm thử đã chạy, một lệnh acceptance, hoặc một sự hoãn có ghi rõ.
 - **Báo cáo acceptance:** `docs/reports/APE-ACCEPT-002-REPORT.md`,
   `docs/reports/APE-ACCEPT-FOLLOWUP-001-REPORT.md`.
-- **Nhật ký quyết định:** `docs/DECISION_LOG.md` (D-001 … D-040), trong đó có các quyết định
-  **D-038/D-039/D-040** về kiểm tra chặt chẽ cài đặt đồng hồ và thứ tự cửa sổ.
-- **Probe acceptance có thể chạy lại:** `scripts/acceptance/README.md` mô tả 7 probe
+- **Nhật ký quyết định:** `docs/DECISION_LOG.md` (D-001 … D-042), trong đó có các quyết định
+  **D-038/D-039/D-040** về kiểm tra chặt chẽ cài đặt đồng hồ và thứ tự cửa sổ, và **D-041/D-042**
+  (chấp nhận mặc định BATCH-003 + mở phạm vi cho màn hình Cài đặt và giao diện di chuyển sự kiện).
+- **Probe acceptance có thể chạy lại:** `scripts/acceptance/README.md` mô tả 8 probe
   (`title`, `at33-boundary`, `at33-loop`, `settings-clock`, `security`, `persistence`,
-  `viewport-320`) và số kết quả mong đợi của từng cái — trong đó `viewport-320` chính là phép
-  kiểm 320 px đã được cam kết vào kho lưu trữ ở trên.
+  `viewport-320`, `ui-journey`) và số kết quả mong đợi của từng cái — trong đó `viewport-320`
+  chính là phép kiểm 320 px đã được cam kết vào kho lưu trữ ở trên, còn `ui-journey` lái cả
+  giao diện thật (31 bước: màn hình Cài đặt, di chuyển/thay đổi kích thước sự kiện, xác nhận
+  hai bước, từ chối giờ nghỉ được bảo vệ).
 
 **Cách chạy thử trên máy của bạn:**
 

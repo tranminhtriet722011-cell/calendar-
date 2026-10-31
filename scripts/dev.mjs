@@ -28,7 +28,7 @@ for (const spec of commands) {
   children.push(child);
 }
 
-function stop(): void {
+function stop() {
   shuttingDown = true;
   for (const child of children) {
     if (!child.killed) child.kill();

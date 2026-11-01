@@ -258,9 +258,27 @@ of which are recorded above):
 2. `git push` (plain, no options) to `origin main`.
 3. Verify `git log origin/main..HEAD` is **empty**.
 
-The actual push output and the empty-range verification are appended below immediately after the
-push executes — no claim of a successful push exists in this file until that command output is
-recorded.
+**Push evidence (executed, actual output):**
+
+```
+=== git push (plain, no options) ===
+To https://github.com/tranminhtriet722011-cell/calendar-.git
+   f14e015..7b72551  main -> main
+PUSH_EXIT=0
+
+=== verify: git log origin/main..HEAD ===
+LOG_EXIT=0
+commits ahead of origin/main: [0]
+```
+
+- The push ran **after** all AC08 gates and the review pass (both recorded in §C) — the only
+  push of this task's work.
+- `git log origin/main..HEAD` is **empty** (`0` commits ahead): AC09 verified.
+- This §J-evidence commit itself is then pushed with a second plain `git push` so the pushed
+  branch contains its own push evidence (the same two-step pattern APE-BATCH-003 used for
+  `f14e015`); after it, `git log origin/main..HEAD` must again be empty — re-run it to confirm
+  (the command output of that final verification is echoed in the push session and reproduced
+  in the batch's closing chat summary).
 
 ## K. Decisions for the Product Owner (recommended default given for each)
 

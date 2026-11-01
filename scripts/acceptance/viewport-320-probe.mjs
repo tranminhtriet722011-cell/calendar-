@@ -41,7 +41,7 @@ if (!CHROME) throw new Error(`chrome.exe not found - set APE_CHROME. Tried:\n  $
 const BASE = process.env.APE_BASE ?? "http://127.0.0.1:8788";
 const PORT = Number(process.env.APE_CDP_PORT ?? 9333);
 const OUT = process.env.APE_320_OUT ?? join(tmpdir(), "ape-viewport320");
-const VIEWS = ["today", "calendar", "tasks", "goals", "habits", "activity"];
+const VIEWS = ["today", "calendar", "tasks", "goals", "habits", "activity", "settings"];
 
 rmSync(join(OUT, "user-data"), { recursive: true, force: true });
 mkdirSync(join(OUT, "shots"), { recursive: true });
@@ -167,7 +167,7 @@ const MEASURE = `(() => {
   return JSON.stringify({ vw, sw, overflowing, clipped, small, title: document.title, h1: (document.querySelector("h1") || {}).textContent || "" });
 })()`;
 
-const EXPECT_H1 = { today: "Today", calendar: "Calendar", tasks: "Tasks", goals: "Goals", habits: "Habits", activity: "Activity" };
+const EXPECT_H1 = { today: "Today", calendar: "Calendar", tasks: "Tasks", goals: "Goals", habits: "Habits", activity: "Activity", settings: "Settings" };
 const results = [];
 for (const view of VIEWS) {
   const loaded = once("Page.loadEventFired", sessionId);

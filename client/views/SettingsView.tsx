@@ -161,7 +161,9 @@ export default function SettingsView({ user, onUserUpdated }: SettingsViewProps)
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
+      // Defer the revoke: revoking synchronously right after click() cancels the download in
+      // some browsers (older Firefox); a macrotask is enough for every current engine.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       announce("Your data has been downloaded.", "success");
     } catch (error) {
       const message = errorMessage(error);

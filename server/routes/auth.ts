@@ -113,7 +113,9 @@ export function authRoutes(db: DB): Router {
       try {
         new Intl.DateTimeFormat("en-US", { timeZone: timezone });
       } catch {
-        throw badRequest("Unknown time zone.");
+        // `details.field` lets the Settings screen mark THIS control invalid instead of only
+        // showing a form-level alert (additive to the contract; the message is unchanged).
+        throw badRequest("Unknown time zone.", { field: "timezone" });
       }
     }
     const updated = updateSettings(db, current.id, merged, timezone);

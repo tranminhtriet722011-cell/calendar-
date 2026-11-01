@@ -16,7 +16,7 @@
 |---|---|
 | Local account registration, login, logout, settings screen (D-042) + `PATCH /api/auth/settings` | username + password only; no email, no OAuth |
 | Tasks: capture, estimate, due date, priority, parent/subtask, goal link, status transitions, ordering | quick add with a title alone leaves the task in Inbox |
-| Calendar: fixed/rest events, manual work blocks, move/resize/lock/delete, free-time computation | conflicts are reported, never silently overwritten. The client edits/moves/resizes **work blocks**; events are locked/unlocked and deleted from the UI, and event move/resize is enforced server-side through the same conflict validator (`PATCH /calendar/events/:id`, review REV-013) but has no dedicated client control yet |
+| Calendar: fixed/rest events, manual work blocks, move/resize/lock/delete, free-time computation | conflicts are reported, never silently overwritten. The client edits/moves/resizes **work blocks and events** alike, through labelled start/end fields with the two-step override confirm for locked conflicts (review REV-013); event *creation* over a locked item has no override control and surfaces the server's honest `409` |
 | Goals: count and milestone metrics, explicit progress logging, milestones, breakdown drafts → commit | progress never moves as a side effect |
 | Habits: daily/weekly cadence, target count, check-ins, pause windows with policy, history scoped to the habit | no streak pressure; attainment is the primary measure |
 | Deterministic scheduler: hard filter → soft rank, three strategies, infeasibility report with concrete options | suggest-only; nothing is written until approval |

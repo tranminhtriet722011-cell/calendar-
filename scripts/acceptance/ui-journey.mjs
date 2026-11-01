@@ -792,6 +792,11 @@ try {
     await act.field("settings-timezone", "Not/AZone");
     if (!(await act.submitFormContaining("settings-timezone"))) throw new Error("settings form not found");
     const alert = await main.page.alertMatching('/Unknown time zone/i', { label: "timezone alert" });
+    // The server names the field in details.field, so the alert must name the CONTROL too and
+    // the input itself must be marked invalid (not just a form-level message somewhere above it).
+    if (!/Time zone/i.test(alert)) throw new Error(`alert does not name the control: ${alert}`);
+    const invalid = await main.page.evaluate(`(() => { const el = document.getElementById('settings-timezone'); return !!(el && el.getAttribute('aria-invalid') === 'true'); })()`);
+    if (!invalid) throw new Error("refused timezone input is not marked aria-invalid");
     return alert.slice(0, 80);
   });
 

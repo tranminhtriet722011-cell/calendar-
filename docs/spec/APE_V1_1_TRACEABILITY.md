@@ -211,7 +211,7 @@ Manual checks MT-01.MT-06 were executed in a real Chromium session against the b
 
 - **No goal/habit deletion endpoint.** Tasks archive (cascade + undo); goals and habits are editable and pausable only (review REV-014; impl-spec R-9).
 - **Undo of a manual work log deletes that logged row** (the log itself is the mistake being reversed); every other undo only releases, restores or flags (review REV-019; impl-spec R-8).
-- **Client-side event move/resize UI is not built**; the server enforces the same conflict validator on `PATCH /calendar/events/:id` (review REV-013/REV-014; impl-spec §1.1).
+- **Event move/resize UI uses labelled fields, not drag handles; event *creation* has no override control.** Moving/resizing an event (and a block) is done through labelled start/end date-time fields with the full two-step override confirm for locked conflicts (APE-BATCH-004, D-042; review REV-013/REV-014); mouse drag-and-drop handles remain deliberately un-built, and creating an event *over* a locked item from the UI still surfaces the server's honest `409`.
 
 ## Requirement gap table — APE-BATCH-003 (Phase 4, 2026-10-29)
 
@@ -245,7 +245,7 @@ the source but no automated test guards it), `UNTESTED` (spec-defined, bounded, 
 | Gap | Why it is not a gap |
 |---|---|
 | Task creation writes no audit row | The spec scopes audit to *schedule* changes ("every schedule change is attributable"). Plain capture staying off the timeline is intended behaviour. |
-| No Settings screen | Impl-spec §11.1: settings are API-only in this increment. Out of scope by specification, not a defect. |
+| Settings edits carry no stale-edit guard | The Settings screen (D-042, APE-BATCH-004) sends the whole object in one `PATCH /auth/settings`; the contract has no revision field for settings, so concurrent edits resolve last-write-wins. Disclosed in impl-spec §11.1 rather than invented — a guard cannot be built without a contract change. |
 | `event.create` undo answers 409 `undo_conflict` | The AT31 stale-edit rule working as designed: the create moved the row's revision, so blind restore is refused rather than half-applied. |
 | Overnight working windows (e.g. 22:00–08:00) refused with 400 | D-039: neither spec defines overnight semantics, and the previous behaviour silently dropped the window. Rejection is the honest interim until the PO defines wrap-around. |
 | `workingHours.days` silently filters invalid entries | Spec defines no valid values for the field; inventing a set would be an unrequested behaviour change (REV-FUP-08 disposition stands). |
